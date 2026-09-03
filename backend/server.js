@@ -7,7 +7,7 @@ const Listing = require('./models/Listing');
 const { scrapeIkman } = require('./services/ikmanScraper');
 const { scrapeRiyasevana } = require('./services/riyasevanaScraper');
 const { backupImages } = require('./services/imageService');
-const { sendWhatsAppAlert } = require('./services/whatsappService');
+const { sendWhatsAppAlert, sendWhatsAppPriceDropAlert } = require('./services/whatsappService');
 const listingRoutes = require('./routes/listingRoutes');
 
 const app = express();
@@ -40,11 +40,30 @@ const runScrapeCycle = async () => {
       // Step 1: Check if this exact URL already exists
       const existingByUrl = await Listing.findOne({ sourceUrl: ad.sourceUrl });
       if (existingByUrl) {
-        // Same URL - just update timestamp
-        await Listing.updateOne(
-          { sourceUrl: ad.sourceUrl },
-          { $set: { postedTimestamp: ad.postedTimestamp, postedTimeText: ad.postedTimeText, title: ad.title } }
-        );
+        // Check if price dropped!
+        if (ad.priceNumeric > 0 && existingByUrl.priceNumeric > 0 && ad.priceNumeric < existingByUrl.priceNumeric) {
+          const dropAmount = existingByUrl.priceNumeric - ad.priceNumeric;
+          console.log(`📉 [PRICE DROP DETECTED] "${ad.title}": ${existingByUrl.price} → ${ad.price} (Saved Rs. ${dropAmount.toLocaleString()})`);
+
+          existingByUrl.previousPrice = existingByUrl.price;
+          existingByUrl.previousPriceNumeric = existingByUrl.priceNumeric;
+          existingByUrl.price = ad.price;
+          existingByUrl.priceNumeric = ad.priceNumeric;
+          existingByUrl.hasPriceDrop = true;
+          existingByUrl.priceDropAmount = dropAmount;
+          existingByUrl.postedTimestamp = ad.postedTimestamp;
+          existingByUrl.postedTimeText = ad.postedTimeText;
+          existingByUrl.title = ad.title;
+          await existingByUrl.save();
+
+          await sendWhatsAppPriceDropAlert(existingByUrl);
+        } else {
+          // Same URL - just update timestamp
+          await Listing.updateOne(
+            { sourceUrl: ad.sourceUrl },
+            { $set: { postedTimestamp: ad.postedTimestamp, postedTimeText: ad.postedTimeText, title: ad.title } }
+          );
+        }
         continue;
       }
 

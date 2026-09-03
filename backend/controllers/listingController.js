@@ -2,10 +2,11 @@ const Listing = require('../models/Listing');
 
 const getListings = async (req, res) => {
   try {
-    const { source, maxPrice, search, timeRange, page = 1, limit = 200 } = req.query;
+    const { source, maxPrice, search, timeRange, priceDropOnly, page = 1, limit = 200 } = req.query;
     const query = {};
 
     if (source) query.source = source;
+    if (priceDropOnly === 'true') query.hasPriceDrop = true;
     if (maxPrice && !isNaN(maxPrice)) query.priceNumeric = { $gt: 0, $lte: Number(maxPrice) };
     if (search) {
       query.$or = [
@@ -59,6 +60,7 @@ const getStats = async (req, res) => {
     const totalListings = await Listing.countDocuments();
     const ikmanCount = await Listing.countDocuments({ source: 'ikman.lk' });
     const riyasevanaCount = await Listing.countDocuments({ source: 'riyasevana.com' });
+    const priceDropCount = await Listing.countDocuments({ hasPriceDrop: true });
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
 
@@ -68,7 +70,7 @@ const getStats = async (req, res) => {
 
     res.json({
       success: true,
-      stats: { totalListings, ikmanCount, riyasevanaCount, todayCount },
+      stats: { totalListings, ikmanCount, riyasevanaCount, todayCount, priceDropCount },
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });

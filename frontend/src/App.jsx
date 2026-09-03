@@ -42,12 +42,13 @@ const getRelativeTime = (timestamp) => {
 
 export default function App() {
   const [listings, setListings] = useState([]);
-  const [stats, setStats] = useState({ totalListings: 0, ikmanCount: 0, riyasevanaCount: 0, todayCount: 0 });
+  const [stats, setStats] = useState({ totalListings: 0, ikmanCount: 0, riyasevanaCount: 0, todayCount: 0, priceDropCount: 0 });
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [sourceFilter, setSourceFilter] = useState('');
   const [maxPrice, setMaxPrice] = useState('');
   const [timeRange, setTimeRange] = useState('all');
+  const [priceDropOnly, setPriceDropOnly] = useState(false);
 
   const fetchData = async () => {
     try {
@@ -56,6 +57,7 @@ export default function App() {
       if (sourceFilter) url += `&source=${encodeURIComponent(sourceFilter)}`;
       if (maxPrice) url += `&maxPrice=${maxPrice}`;
       if (timeRange) url += `&timeRange=${timeRange}`;
+      if (priceDropOnly) url += `&priceDropOnly=true`;
 
       const res = await fetch(url);
       const data = await res.json();
@@ -79,7 +81,11 @@ export default function App() {
     fetchData();
     const interval = setInterval(fetchData, 8000);
     return () => clearInterval(interval);
-  }, [search, sourceFilter, maxPrice, timeRange]);
+  }, [search, sourceFilter, maxPrice, timeRange, priceDropOnly]);
+
+  const displayedListings = priceDropOnly
+    ? listings.filter((item) => item.hasPriceDrop === true)
+    : listings;
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-6">
@@ -105,10 +111,14 @@ export default function App() {
       </header>
 
       {/* Stats Bar */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
         <div className="bg-[#151c2c] border border-[#232f48] p-4 rounded-2xl flex flex-col">
           <span className="text-2xl font-bold text-white">{stats.todayCount}</span>
           <span className="text-xs text-slate-400">Deals Today (අද)</span>
+        </div>
+        <div className="bg-[#151c2c] border border-rose-500/30 bg-rose-950/20 p-4 rounded-2xl flex flex-col relative overflow-hidden">
+          <span className="text-2xl font-bold text-rose-400">{stats.priceDropCount || 0}</span>
+          <span className="text-xs text-rose-300 font-medium">Price Drops (මිල අඩු වූ)</span>
         </div>
         <div className="bg-[#151c2c] border border-[#232f48] p-4 rounded-2xl flex flex-col">
           <span className="text-2xl font-bold text-white">{stats.totalListings}</span>
@@ -188,6 +198,18 @@ export default function App() {
           />
         </div>
 
+        <button
+          onClick={() => setPriceDropOnly(!priceDropOnly)}
+          className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer border ${
+            priceDropOnly
+              ? 'bg-gradient-to-r from-rose-600 to-red-600 text-white border-rose-500 shadow-lg shadow-rose-500/30 animate-pulse'
+              : 'bg-[#0b0f19] text-rose-400 border-rose-900/60 hover:bg-rose-950/40'
+          }`}
+        >
+          <span>📉</span>
+          <span>Price Drops Only</span>
+        </button>
+
         <select
           className="bg-[#0b0f19] border border-[#232f48] text-sm text-slate-200 px-3.5 py-2.5 rounded-xl outline-none focus:border-blue-500"
           value={sourceFilter}
@@ -221,38 +243,51 @@ export default function App() {
       <div className="flex items-center justify-between mb-5 text-xs text-slate-400 px-1">
         <div className="flex items-center gap-1.5 font-medium">
           <Layers className="w-4 h-4 text-blue-400" />
-          <span>Showing <strong className="text-white">{listings.length}</strong> of <strong className="text-white">{stats.totalListings}</strong> Total Three-Wheel Deals</span>
+          <span>Showing <strong className="text-white">{displayedListings.length}</strong> of <strong className="text-white">{stats.totalListings}</strong> Total Three-Wheel Deals</span>
         </div>
       </div>
 
-      {/* Main Deals Feed */}
-      {loading ? (
-        <div className="text-center py-16 bg-[#151c2c] border border-[#232f48] rounded-2xl text-slate-400">
-          <p className="animate-pulse">Loading 3-Wheel deals...</p>
-        </div>
-      ) : listings.length === 0 ? (
-        <div className="text-center py-16 bg-[#151c2c] border border-dashed border-[#232f48] rounded-2xl text-slate-400">
-          <h3 className="text-lg font-semibold text-white mb-1">No Three-Wheel listings found</h3>
-          <p className="text-sm">The backend scraper is continuously monitoring every 1 minute for newly posted ads...</p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-          {listings.map((item, index) => {
-            const imageSrc = (item.originalImages && item.originalImages.length > 0)
-              ? item.originalImages[0]
-              : null;
-            const isNewestTop = index === 0;
+            {/* Main Deals Feed */}
+            {loading ? (
+              <div className="text-center py-16 bg-[#151c2c] border border-[#232f48] rounded-2xl text-slate-400">
+                <p className="animate-pulse">Loading 3-Wheel deals...</p>
+              </div>
+            ) : displayedListings.length === 0 ? (
+              <div className="text-center py-16 bg-[#151c2c] border border-dashed border-[#232f48] rounded-2xl text-slate-400">
+                <h3 className="text-lg font-semibold text-white mb-1">
+                  {priceDropOnly ? 'No Price Drop listings found at the moment' : 'No Three-Wheel listings found'}
+                </h3>
+                <p className="text-sm">
+                  {priceDropOnly 
+                    ? 'When a seller reduces their listing price on ikman or riyasevana, it will appear here automatically.' 
+                    : 'The backend scraper is continuously monitoring every 5 minutes for newly posted ads...'}
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                {displayedListings.map((item, index) => {
+                  const imageSrc = (item.originalImages && item.originalImages.length > 0)
+                    ? item.originalImages[0]
+                    : null;
+                  const isNewestTop = index === 0;
 
             return (
               <div 
                 key={item._id || item.sourceUrl} 
                 className={`bg-[#151c2c] border rounded-2xl overflow-hidden flex flex-col transition-all duration-200 hover:-translate-y-1 shadow-lg shadow-black/20 relative ${
-                  isNewestTop 
-                    ? 'border-blue-500 ring-2 ring-blue-500/30' 
-                    : 'border-[#232f48] hover:border-blue-500/40 hover:bg-[#1c263c]'
+                  item.hasPriceDrop
+                    ? 'border-rose-500 ring-2 ring-rose-500/40 bg-gradient-to-b from-[#1c1320] to-[#151c2c]'
+                    : isNewestTop 
+                      ? 'border-blue-500 ring-2 ring-blue-500/30' 
+                      : 'border-[#232f48] hover:border-blue-500/40 hover:bg-[#1c263c]'
                 }`}
               >
-                {isNewestTop && (
+                {item.hasPriceDrop ? (
+                  <div className="absolute top-3 left-3 z-10 bg-gradient-to-r from-rose-600 to-red-600 text-white text-[10px] font-extrabold px-2.5 py-1 rounded-full flex items-center gap-1 shadow-lg shadow-rose-600/40 animate-bounce">
+                    <Flame className="w-3.5 h-3.5" />
+                    <span>PRICE DROP - SAVE RS. {item.priceDropAmount ? item.priceDropAmount.toLocaleString() : ''}</span>
+                  </div>
+                ) : isNewestTop && (
                   <div className="absolute top-3 left-3 z-10 bg-gradient-to-r from-amber-500 to-red-500 text-white text-[10px] font-extrabold px-2.5 py-1 rounded-full flex items-center gap-1 shadow-md shadow-amber-500/30 animate-pulse">
                     <Sparkles className="w-3 h-3" />
                     <span>LATEST DEAL</span>
@@ -280,8 +315,16 @@ export default function App() {
                   <h3 className="text-base font-semibold text-white line-clamp-2 leading-snug">
                     {item.title}
                   </h3>
-                  <div className="text-xl font-bold text-emerald-400">
-                    {item.price ? item.price.replace(/(Rs\s?[\d,]+)\1/g, '$1') : 'Negotiable'}
+                  
+                  <div className="flex items-baseline gap-2 flex-wrap">
+                    <div className="text-xl font-bold text-emerald-400">
+                      {item.price ? item.price.replace(/(Rs\s?[\d,]+)\1/g, '$1') : 'Negotiable'}
+                    </div>
+                    {item.previousPrice && (
+                      <span className="text-xs text-slate-500 line-through font-medium">
+                        {item.previousPrice}
+                      </span>
+                    )}
                   </div>
 
                   <div className="flex flex-col gap-1.5 text-xs text-slate-400 border-t border-[#232f48] pt-3 mt-auto">

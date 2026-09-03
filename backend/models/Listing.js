@@ -15,6 +15,10 @@ const listingSchema = new mongoose.Schema(
     postedTimeText: { type: String, default: 'Recently posted' },
     postedTimestamp: { type: Date, default: Date.now, index: true },
     notifiedWhatsApp: { type: Boolean, default: false },
+    previousPrice: { type: String, default: null },
+    previousPriceNumeric: { type: Number, default: null },
+    hasPriceDrop: { type: Boolean, default: false, index: true },
+    priceDropAmount: { type: Number, default: 0 },
   },
   {
     timestamps: true,

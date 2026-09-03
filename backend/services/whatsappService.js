@@ -130,7 +130,62 @@ const sendWhatsAppAlert = async (listing, targetPhone = process.env.ALERT_PHONE_
   }
 };
 
+/**
+ * Sends instant WhatsApp alert when a price drop is detected
+ * @param {Object} listing 
+ * @param {string} targetPhone 
+ */
+const sendWhatsAppPriceDropAlert = async (listing, targetPhone = process.env.ALERT_PHONE_NUMBER) => {
+  if (!clientReady) {
+    console.log(`[WhatsApp] Client not authenticated. Skipping price drop alert for: ${listing.title}`);
+    return false;
+  }
+
+  try {
+    let formattedPhone = targetPhone ? targetPhone.trim() : '';
+    if (!formattedPhone) return false;
+
+    if (!formattedPhone.endsWith('@c.us')) {
+      formattedPhone = `${formattedPhone.replace(/[^0-9]/g, '')}@c.us`;
+    }
+
+    const imageToUse = (listing.originalImages && listing.originalImages.length > 0)
+      ? listing.originalImages[0]
+      : null;
+
+    const formattedDrop = listing.priceDropAmount ? `Rs. ${listing.priceDropAmount.toLocaleString()}` : '';
+
+    const messageText = `📉 *PRICE DROP ALERT!* 🔥 🛺
+
+📌 *${listing.title}*
+💰 *New Price:* ${listing.price} (Was: ~${listing.previousPrice || 'higher'}~)
+💥 *SAVED:* ${formattedDrop} OFF!
+📍 *Location:* ${listing.location}
+🌐 *Source:* ${listing.source}
+
+🔗 *Direct Link:* ${listing.sourceUrl}`;
+
+    if (imageToUse) {
+      try {
+        const media = await MessageMedia.fromUrl(imageToUse);
+        await client.sendMessage(formattedPhone, media, { caption: messageText });
+      } catch (mediaErr) {
+        await client.sendMessage(formattedPhone, messageText);
+      }
+    } else {
+      await client.sendMessage(formattedPhone, messageText);
+    }
+
+    console.log(`[WhatsApp Price Drop Alert Sent] "${listing.title}" to ${formattedPhone}`);
+    return true;
+  } catch (error) {
+    console.error(`[WhatsApp Send Error] ${error.message}`);
+    return false;
+  }
+};
+
 module.exports = {
   sendWhatsAppAlert,
+  sendWhatsAppPriceDropAlert,
   isWhatsAppReady: () => clientReady,
 };
