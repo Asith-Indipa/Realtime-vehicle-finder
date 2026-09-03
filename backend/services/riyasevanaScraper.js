@@ -19,7 +19,10 @@ const INVALID_VEHICLES = [
   'apache', 'pulsar', 'xcd', 'discover', 'platina', 'ct100', 'ct 100', 'fz', 'dio', 'wego',
   'hornet', 'gn125', 'gn 125', 'twister', 'ray z', 'pleasure', 'scooty', 'vespa', 'benly',
   'bike', 'scooter', 'motorcycle', 'yb100', 'splendor', 'dash', 'v15', 'honda', 'yamaha', 'hero',
-  'suzuki', 'tvs', 'kawasaki', 'royal enfield',
+  'suzuki', 'kawasaki', 'royal enfield',
+
+  // Buses
+  'bus', 'buses', 'leyland', 'ashok', 'ashok-leyland', 'eicher', 'rosa', 'coaster', 'viking',
 
   // Cars, SUVs, Vans, Trucks, Cabs & Lorries
   'kwid', 'dimo', 'lokka', 'renault', 'tata', 'tercel', 'corolla', 'civic',
@@ -31,7 +34,7 @@ const INVALID_VEHICLES = [
   'l200', 'bongo', 'canter', 'townace', 'liteace', 'hiace', 'carina', 'bluebird', 'vitz', 'celerio'
 ];
 
-const VALID_THREEWHEEL_REGEX = /\b(bajaj re|re|2\s*stroke|4\s*stroke|tvs king|king|piaggio ape|ape|three\s*wheel|3\s*wheel|three-wheel|3-wheel|tuk|qute|compact|maxima|chassis|4stroke|2stroke|yf|subish|piaggio|three\s*wheelers)\b/i;
+const VALID_THREEWHEEL_REGEX = /\b(bajaj re|re|2\s*stroke|4\s*stroke|tvs\s*king|piaggio\s*ape|ape|three\s*wheel|3\s*wheel|three-wheel|3-wheel|tuk|qute|compact|maxima|chassis|4stroke|2stroke|yf|subish|piaggio|three\s*wheelers)\b/i;
 
 const isStrictThreeWheel = (title, sourceUrl) => {
   const text = `${title} ${sourceUrl}`.toLowerCase();
@@ -165,6 +168,8 @@ const scrapeRiyasevana = async () => {
       seenUrls.add(sourceUrl);
 
       let title = h2Text;
+      // Remove duplicate brand name (e.g. "Piaggio Piaggio" -> "Piaggio")
+      title = title.replace(/\b(\w+)\s+\1\b/gi, '$1');
       if (!title.toLowerCase().includes('three wheel') && !title.toLowerCase().includes('3 wheel') && !title.toLowerCase().includes('tuk')) {
         title = `${title} Three Wheel`;
       }
@@ -202,7 +207,10 @@ const scrapeRiyasevana = async () => {
       }
 
       const priceNumeric = parseInt(priceText.replace(/[^0-9]/g, ''), 10) || 0;
-      const postedTimestamp = parsePostedTimestamp(timeText);
+      let postedTimestamp = parsePostedTimestamp(timeText);
+      if (timeText === 'Recently posted' || !postedTimestamp) {
+        postedTimestamp = new Date(Date.now() - (index + 1) * 60 * 1000);
+      }
 
       listings.push({
         title,

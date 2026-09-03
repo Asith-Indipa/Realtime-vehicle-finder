@@ -32,11 +32,11 @@ const getRelativeTime = (timestamp) => {
   const weeks = Math.floor(days / 7);
 
   if (minutes < 1) return 'Just now';
-  if (minutes < 60) return `${minutes} minute${minutes > 1 ? 's' : ''} ago`;
-  if (hours < 24) return `${hours} hour${hours > 1 ? 's' : ''} ago`;
+  if (minutes < 60) return `${minutes}m ago`;
+  if (hours < 24) return `${hours}h ago`;
   if (days === 1) return 'Yesterday';
-  if (days < 7) return `${days} days ago`;
-  if (weeks < 5) return `${weeks} week${weeks > 1 ? 's' : ''} ago`;
+  if (days < 7) return `${days}d ago`;
+  if (weeks < 5) return `${weeks}w ago`;
   return posted.toLocaleDateString();
 };
 
@@ -291,7 +291,7 @@ export default function App() {
                     </div>
                     <div className="flex items-center gap-1.5 text-sky-400 font-medium">
                       <Clock className="w-3.5 h-3.5" />
-                      <span>{item.postedTimeText ? item.postedTimeText : getRelativeTime(item.postedTimestamp)}</span>
+                      <span>{getRelativeTime(item.postedTimestamp)}</span>
                     </div>
                   </div>
 

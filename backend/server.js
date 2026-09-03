@@ -37,19 +37,54 @@ const runScrapeCycle = async () => {
     let newItemsCount = 0;
 
     for (const ad of allScrapedAds) {
-      // Check if ad exists in DB
-      const existing = await Listing.findOne({ sourceUrl: ad.sourceUrl });
-      if (!existing) {
-        // Auto-backup images to Cloudinary (if configured in .env)
-        const cloudImages = await backupImages(ad.originalImages);
+      // Step 1: Check if this exact URL already exists
+      const existingByUrl = await Listing.findOne({ sourceUrl: ad.sourceUrl });
+      if (existingByUrl) {
+        // Same URL - just update timestamp
+        await Listing.updateOne(
+          { sourceUrl: ad.sourceUrl },
+          { $set: { postedTimestamp: ad.postedTimestamp, postedTimeText: ad.postedTimeText, title: ad.title } }
+        );
+        continue;
+      }
 
-        // Save new listing to database
-        const newListing = await Listing.create({
-          ...ad,
-          cloudinaryImages: cloudImages,
+      // Step 2: Smart duplicate detection - same vehicle, different URL
+      // Check by: (A) Same image URL, OR (B) Same price + location + source
+      const adImageUrl = (ad.originalImages && ad.originalImages.length > 0) ? ad.originalImages[0] : null;
+      let duplicateEntry = null;
+
+      // (A) Match by image URL
+      if (adImageUrl && adImageUrl.length > 10) {
+        duplicateEntry = await Listing.findOne({
+          source: ad.source,
+          originalImages: adImageUrl,
         });
+      }
 
-        newItemsCount++;
+      // (B) Match by price + location (if image didn't match)
+      if (!duplicateEntry && ad.priceNumeric > 0) {
+        duplicateEntry = await Listing.findOne({
+          source: ad.source,
+          priceNumeric: ad.priceNumeric,
+          location: ad.location,
+        });
+      }
+
+      if (duplicateEntry) {
+        // Same vehicle reposted with new URL - replace old with newest version
+        console.log(`🔄 [DUPLICATE REPLACED] "${duplicateEntry.title}" → "${ad.title}"`);
+        await Listing.deleteOne({ _id: duplicateEntry._id });
+      }
+
+      // Save new listing to database
+      const cloudImages = await backupImages(ad.originalImages);
+      const newListing = await Listing.create({
+        ...ad,
+        cloudinaryImages: cloudImages,
+      });
+
+      newItemsCount++;
+      if (!duplicateEntry) {
         console.log(`✨ [NEW DEAL DETECTED] [${ad.source}] ${ad.title} (${ad.price})`);
 
         // Trigger instant WhatsApp alert
@@ -58,12 +93,6 @@ const runScrapeCycle = async () => {
           newListing.notifiedWhatsApp = true;
           await newListing.save();
         }
-      } else {
-        // Update the timestamp so sorting/filtering stays accurate
-        await Listing.updateOne(
-          { sourceUrl: ad.sourceUrl },
-          { $set: { postedTimestamp: ad.postedTimestamp, postedTimeText: ad.postedTimeText } }
-        );
       }
     }
 
