@@ -2,7 +2,7 @@ const Listing = require('../models/Listing');
 
 const getListings = async (req, res) => {
   try {
-    const { source, maxPrice, search, timeRange, page = 1, limit = 50 } = req.query;
+    const { source, maxPrice, search, timeRange, page = 1, limit = 200 } = req.query;
     const query = {};
 
     if (source) query.source = source;
@@ -30,14 +30,15 @@ const getListings = async (req, res) => {
       query.postedTimestamp = { $gte: startDate };
     }
 
-    const skip = (Number(page) - 1) * Number(limit);
+    const numericLimit = limit === 'all' ? 0 : Number(limit);
+    const skip = numericLimit > 0 ? (Number(page) - 1) * numericLimit : 0;
 
-    // Strict reverse-chronological sorting: Newest posted vehicle ALWAYS rendered first
-    const listings = await Listing.find(query)
-      .sort({ postedTimestamp: -1, createdAt: -1 })
-      .skip(skip)
-      .limit(Number(limit));
+    let dbQuery = Listing.find(query).sort({ postedTimestamp: -1, createdAt: -1 });
+    if (numericLimit > 0) {
+      dbQuery = dbQuery.skip(skip).limit(numericLimit);
+    }
 
+    const listings = await dbQuery;
     const total = await Listing.countDocuments(query);
 
     res.json({
@@ -45,7 +46,7 @@ const getListings = async (req, res) => {
       count: listings.length,
       total,
       page: Number(page),
-      pages: Math.ceil(total / Number(limit)),
+      pages: numericLimit > 0 ? Math.ceil(total / numericLimit) : 1,
       data: listings,
     });
   } catch (error) {

@@ -8,7 +8,8 @@ import {
   MapPin, 
   RefreshCw,
   Calendar,
-  Sparkles
+  Sparkles,
+  Layers
 } from 'lucide-react';
 
 const API_BASE_URL = 'http://localhost:5000/api/listings';
@@ -50,7 +51,7 @@ export default function App() {
 
   const fetchData = async () => {
     try {
-      let url = `${API_BASE_URL}?limit=50`;
+      let url = `${API_BASE_URL}?limit=200`;
       if (search) url += `&search=${encodeURIComponent(search)}`;
       if (sourceFilter) url += `&source=${encodeURIComponent(sourceFilter)}`;
       if (maxPrice) url += `&maxPrice=${maxPrice}`;
@@ -175,7 +176,7 @@ export default function App() {
       </div>
 
       {/* Main Filter Bar */}
-      <div className="bg-[#151c2c] border border-[#232f48] p-4 rounded-2xl mb-6 flex flex-wrap gap-3">
+      <div className="bg-[#151c2c] border border-[#232f48] p-4 rounded-2xl mb-4 flex flex-wrap gap-3">
         <div className="flex items-center gap-2 flex-1 min-w-[220px] bg-[#0b0f19] border border-[#232f48] px-3.5 py-2.5 rounded-xl focus-within:border-blue-500 transition-colors">
           <Search className="w-4 h-4 text-slate-400" />
           <input
@@ -214,6 +215,14 @@ export default function App() {
         >
           <RefreshCw className="w-4 h-4" />
         </button>
+      </div>
+
+      {/* Showing Count Indicator */}
+      <div className="flex items-center justify-between mb-5 text-xs text-slate-400 px-1">
+        <div className="flex items-center gap-1.5 font-medium">
+          <Layers className="w-4 h-4 text-blue-400" />
+          <span>Showing <strong className="text-white">{listings.length}</strong> of <strong className="text-white">{stats.totalListings}</strong> Total Three-Wheel Deals</span>
+        </div>
       </div>
 
       {/* Main Deals Feed */}
