@@ -28,6 +28,20 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    alertLocation: {
+      type: String,
+      default: 'all',
+      trim: true,
+    },
+    alertModel: {
+      type: String,
+      default: 'all',
+      trim: true,
+    },
+    alertMaxPrice: {
+      type: Number,
+      default: null,
+    },
   },
   {
     timestamps: true,

@@ -252,53 +252,79 @@ const restartWhatsAppBot = async () => {
 const User = require('../models/User');
 
 /**
- * Retrieves all valid, active subscriber phone numbers from MongoDB + .env
+ * Retrieves all subscribers whose alert filters match the given listing
  */
-const getSubscribedPhoneNumbers = async () => {
-  const phones = new Set();
-  
+const getSubscribedUsersForListing = async (listing) => {
+  const matchingSubscribers = [];
+
   if (process.env.ALERT_PHONE_NUMBER && process.env.ALERT_PHONE_NUMBER.trim()) {
     const envPhone = process.env.ALERT_PHONE_NUMBER.trim().replace(/[^0-9]/g, '');
-    if (envPhone) phones.add(envPhone);
+    if (envPhone) {
+      matchingSubscribers.push({ whatsappNumber: envPhone, name: 'Admin Alert' });
+    }
   }
 
   try {
     const users = await User.find({ isSubscribed: true, whatsappNumber: { $exists: true, $ne: '' } });
     for (const u of users) {
-      if (u.whatsappNumber) {
-        const cleanP = u.whatsappNumber.trim().replace(/[^0-9]/g, '');
-        if (cleanP) phones.add(cleanP);
+      const cleanPhone = u.whatsappNumber ? u.whatsappNumber.trim().replace(/[^0-9]/g, '') : '';
+      if (!cleanPhone) continue;
+
+      // 1. Check Location Filter
+      if (u.alertLocation && u.alertLocation !== 'all') {
+        const locFilter = u.alertLocation.toLowerCase().trim();
+        const listingLoc = (listing.location || '').toLowerCase();
+        if (!listingLoc.includes(locFilter)) {
+          continue; // Skip: Location doesn't match
+        }
       }
+
+      // 2. Check Model Filter
+      if (u.alertModel && u.alertModel !== 'all') {
+        const modelFilter = u.alertModel.toLowerCase().trim();
+        const listingTitle = (listing.title || '').toLowerCase();
+        let matchesModel = true;
+
+        if (modelFilter === '2-stroke') {
+          matchesModel = /2\s*stroke/i.test(listingTitle);
+        } else if (modelFilter === '4-stroke') {
+          matchesModel = /4\s*stroke/i.test(listingTitle);
+        } else if (modelFilter === 'tvs-king') {
+          matchesModel = /tvs|king/i.test(listingTitle);
+        } else if (modelFilter === 'piaggio-ape') {
+          matchesModel = /piaggio|ape/i.test(listingTitle);
+        } else if (modelFilter === 'bajaj-205') {
+          matchesModel = /205|re205/i.test(listingTitle);
+        } else {
+          matchesModel = listingTitle.includes(modelFilter);
+        }
+
+        if (!matchesModel) {
+          continue; // Skip: Model doesn't match
+        }
+      }
+
+      // 3. Check Max Price Filter
+      if (u.alertMaxPrice && u.alertMaxPrice > 0) {
+        if (listing.priceNumeric && listing.priceNumeric > u.alertMaxPrice) {
+          continue; // Skip: Price exceeds max limit
+        }
+      }
+
+      matchingSubscribers.push({
+        whatsappNumber: cleanPhone,
+        name: u.name,
+      });
     }
   } catch (err) {
-    console.error('[WhatsApp Service] Subscriber fetch error:', err.message);
+    console.error('[WhatsApp Service] Subscriber match error:', err.message);
   }
 
-  return Array.from(phones);
+  return matchingSubscribers;
 };
 
 /**
- * Resolves a raw phone number into a valid WhatsApp JID (e.g. 94771234567@c.us)
- */
-const resolveTargetJid = async (rawPhone) => {
-  const cleanP = rawPhone.trim().replace(/[^0-9]/g, '');
-  if (!cleanP) return null;
-
-  try {
-    if (client && client.getNumberId) {
-      const numberDetails = await client.getNumberId(cleanP);
-      if (numberDetails && numberDetails._serialized) {
-        return numberDetails._serialized;
-      }
-    }
-  } catch (e) {
-    console.log(`[WhatsApp Lookup Note] Fallback JID for ${cleanP}`);
-  }
-  return `${cleanP}@c.us`;
-};
-
-/**
- * Sends instant WhatsApp alert for a newly detected listing to all active subscribers
+ * Sends instant WhatsApp alert for a newly detected listing to matching subscribers
  * @param {Object} listing 
  */
 const sendWhatsAppAlert = async (listing) => {
@@ -308,9 +334,9 @@ const sendWhatsAppAlert = async (listing) => {
   }
 
   try {
-    const phoneNumbers = await getSubscribedPhoneNumbers();
-    if (phoneNumbers.length === 0) {
-      console.log('[WhatsApp] No subscribed phone numbers found in DB or .env');
+    const subscribers = await getSubscribedUsersForListing(listing);
+    if (subscribers.length === 0) {
+      console.log(`[WhatsApp Filter Note] No matching subscribers for "${listing.title}" in ${listing.location}`);
       return false;
     }
 
@@ -333,9 +359,9 @@ const sendWhatsAppAlert = async (listing) => {
 🔗 *Direct Link:* ${listing.sourceUrl}`;
 
     let successCount = 0;
-    for (const rawPhone of phoneNumbers) {
+    for (const sub of subscribers) {
       try {
-        const targetJid = await resolveTargetJid(rawPhone);
+        const targetJid = await resolveTargetJid(sub.whatsappNumber);
         if (!targetJid) continue;
 
         if (imageToUse) {
@@ -350,13 +376,13 @@ const sendWhatsAppAlert = async (listing) => {
           await client.sendMessage(targetJid, messageText);
         }
         successCount++;
-        console.log(`[WhatsApp Alert Delivered] Sent to ${targetJid}`);
+        console.log(`[WhatsApp Alert Delivered] Sent to ${targetJid} (${sub.name})`);
       } catch (err) {
-        console.error(`[WhatsApp Send Error to ${rawPhone}] ${err.message}`);
+        console.error(`[WhatsApp Send Error to ${sub.whatsappNumber}] ${err.message}`);
       }
     }
 
-    console.log(`[WhatsApp Alert Sent] Broadcasted "${listing.title}" to ${successCount} subscriber(s).`);
+    console.log(`[WhatsApp Alert Sent] Delivered "${listing.title}" to ${successCount} matching subscriber(s).`);
     return successCount > 0;
   } catch (error) {
     console.error(`[WhatsApp Send Error] ${error.message}`);

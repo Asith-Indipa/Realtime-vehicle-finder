@@ -21,7 +21,9 @@ import {
   Settings,
   LogOut,
   Bell,
-  ShieldCheck
+  ShieldCheck,
+  Filter,
+  Tag
 } from 'lucide-react';
 
 const API_BASE_URL = 'http://localhost:5000/api/listings';
@@ -71,10 +73,16 @@ export default function App() {
   const [showLocationModal, setShowLocationModal] = useState(false);
   const [activeDistrict, setActiveDistrict] = useState('Colombo');
   const [locationSearch, setLocationSearch] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(24);
   const [whatsappInfo, setWhatsappInfo] = useState({ status: 'INITIALIZING', qrCodeImageUrl: null, ready: false });
   const [showQrModal, setShowQrModal] = useState(false);
   const [restartingWa, setRestartingWa] = useState(false);
   const [loggingOutWa, setLoggingOutWa] = useState(false);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, sourceFilter, maxPrice, timeRange, priceDropOnly, selectedLocation, selectedModel, sortBy]);
 
   // Authentication & Profile States
   const [currentUser, setCurrentUser] = useState(() => {
@@ -100,6 +108,9 @@ export default function App() {
   const [profileName, setProfileName] = useState('');
   const [profilePhone, setProfilePhone] = useState('');
   const [profileSubscribed, setProfileSubscribed] = useState(true);
+  const [profileAlertLocation, setProfileAlertLocation] = useState('all');
+  const [profileAlertModel, setProfileAlertModel] = useState('all');
+  const [profileAlertMaxPrice, setProfileAlertMaxPrice] = useState('');
   const [profileSuccess, setProfileSuccess] = useState('');
   const [profileError, setProfileError] = useState('');
   const [profileLoading, setProfileLoading] = useState(false);
@@ -178,6 +189,9 @@ export default function App() {
     setProfileName(currentUser.name || '');
     setProfilePhone(currentUser.whatsappNumber || '');
     setProfileSubscribed(currentUser.isSubscribed !== false);
+    setProfileAlertLocation(currentUser.alertLocation || 'all');
+    setProfileAlertModel(currentUser.alertModel || 'all');
+    setProfileAlertMaxPrice(currentUser.alertMaxPrice || '');
     setProfileSuccess('');
     setProfileError('');
     setShowProfileModal(true);
@@ -200,6 +214,9 @@ export default function App() {
           name: profileName,
           whatsappNumber: profilePhone,
           isSubscribed: profileSubscribed,
+          alertLocation: profileAlertLocation,
+          alertModel: profileAlertModel,
+          alertMaxPrice: profileAlertMaxPrice ? Number(profileAlertMaxPrice) : null,
         }),
       });
 
@@ -240,7 +257,7 @@ export default function App() {
 
   const fetchData = async () => {
     try {
-      let url = `${API_BASE_URL}?limit=200`;
+      let url = `${API_BASE_URL}?limit=all`;
       if (search) url += `&search=${encodeURIComponent(search)}`;
       if (sourceFilter) url += `&source=${encodeURIComponent(sourceFilter)}`;
       if (maxPrice) url += `&maxPrice=${maxPrice}`;
@@ -307,6 +324,12 @@ export default function App() {
   const displayedListings = priceDropOnly
     ? listings.filter((item) => item.hasPriceDrop === true)
     : listings;
+
+  const totalPages = Math.ceil(displayedListings.length / itemsPerPage) || 1;
+  const paginatedListings = displayedListings.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage
+  );
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-6 relative">
@@ -498,54 +521,38 @@ export default function App() {
         </div>
       </div>
 
-      {/* Time Range Filter Bar (Today / Week / Month / All Time) */}
+      {/* Time Range Filter Bar (Today / This Week) */}
       <div className="bg-[#151c2c] border border-[#232f48] p-2.5 rounded-2xl mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-1.5 text-xs text-slate-400 font-semibold px-2">
           <Calendar className="w-4 h-4 text-blue-400" />
           <span>Post Date Filter:</span>
         </div>
 
-        <div className="flex items-center gap-1.5 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap">
           <button
             onClick={() => setTimeRange('today')}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
               timeRange === 'today'
-                ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
-                : 'bg-[#0b0f19] text-slate-400 hover:text-white border border-[#232f48]'
+                ? 'bg-blue-600 text-white border-blue-500 shadow-lg shadow-blue-500/20'
+                : 'bg-[#0b0f19] text-slate-300 hover:text-white border-[#232f48]'
             }`}
           >
             📅 Today (අද)
           </button>
           <button
-            onClick={() => setTimeRange('week')}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-              timeRange === 'week'
-                ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
-                : 'bg-[#0b0f19] text-slate-400 hover:text-white border border-[#232f48]'
-            }`}
-          >
-            🗓️ This Week (මේ සතිය)
-          </button>
-          <button
-            onClick={() => setTimeRange('month')}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-              timeRange === 'month'
-                ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
-                : 'bg-[#0b0f19] text-slate-400 hover:text-white border border-[#232f48]'
-            }`}
-          >
-            🗓️ This Month (මේ මාසය)
-          </button>
-          <button
             onClick={() => setTimeRange('all')}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-              timeRange === 'all'
-                ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
-                : 'bg-[#0b0f19] text-slate-400 hover:text-white border border-[#232f48]'
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
+              timeRange === 'all' || timeRange === 'week'
+                ? 'bg-blue-600 text-white border-blue-500 shadow-lg shadow-blue-500/20'
+                : 'bg-[#0b0f19] text-slate-300 hover:text-white border-[#232f48]'
             }`}
           >
-            🌐 All Time (සියල්ල)
+            🗓️ This Week (මේ සතියේ 3-Wheelers)
           </button>
+
+          <span className="text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-2.5 py-1 rounded-full font-semibold ml-1">
+            ⚡ Auto 7-Day Cleanup Active
+          </span>
         </div>
       </div>
 
@@ -658,7 +665,7 @@ export default function App() {
       <div className="flex items-center justify-between mb-5 text-xs text-slate-400 px-1">
         <div className="flex items-center gap-1.5 font-medium">
           <Layers className="w-4 h-4 text-blue-400" />
-          <span>Showing <strong className="text-white">{displayedListings.length}</strong> of <strong className="text-white">{stats.totalListings}</strong> Total Three-Wheel Deals</span>
+          <span>Showing <strong className="text-white font-bold">{displayedListings.length}</strong> Total Three-Wheel Deals (සෑම ත්‍රීවීල් Ad එකක්ම)</span>
         </div>
       </div>
 
@@ -679,12 +686,13 @@ export default function App() {
                 </p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-                {displayedListings.map((item, index) => {
-                  const imageSrc = (item.originalImages && item.originalImages.length > 0)
-                    ? item.originalImages[0]
-                    : null;
-                  const isNewestTop = index === 0;
+              <>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                  {paginatedListings.map((item, index) => {
+                    const imageSrc = (item.originalImages && item.originalImages.length > 0)
+                      ? item.originalImages[0]
+                      : null;
+                    const isNewestTop = currentPage === 1 && index === 0;
 
             return (
               <div 
@@ -781,12 +789,120 @@ export default function App() {
             );
           })}
         </div>
+
+        {/* Pagination Controls Bar */}
+        {displayedListings.length > 0 && (
+          <div className="bg-[#151c2c] border border-[#232f48] rounded-2xl p-4 mt-6 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-lg">
+            {/* Status info */}
+            <div className="text-xs text-slate-400 font-medium">
+              Page <strong className="text-white font-bold">{currentPage}</strong> of <strong className="text-white font-bold">{totalPages}</strong>
+              <span className="mx-2 text-slate-600">•</span>
+              Showing <strong className="text-blue-400 font-semibold">{Math.min((currentPage - 1) * itemsPerPage + 1, displayedListings.length)} - {Math.min(currentPage * itemsPerPage, displayedListings.length)}</strong> of <strong className="text-white font-bold">{displayedListings.length}</strong> deals
+            </div>
+
+            {/* Page Number Buttons */}
+            <div className="flex items-center gap-1.5 flex-wrap justify-center">
+              {/* First Page */}
+              <button
+                disabled={currentPage === 1}
+                onClick={() => {
+                  setCurrentPage(1);
+                  window.scrollTo({ top: 300, behavior: 'smooth' });
+                }}
+                className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-[#0b0f19] border border-[#232f48] text-slate-300 hover:bg-blue-600 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-all cursor-pointer"
+              >
+                « First
+              </button>
+
+              {/* Prev Page */}
+              <button
+                disabled={currentPage === 1}
+                onClick={() => {
+                  setCurrentPage((prev) => Math.max(prev - 1, 1));
+                  window.scrollTo({ top: 300, behavior: 'smooth' });
+                }}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#0b0f19] border border-[#232f48] text-slate-300 hover:bg-blue-600 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-all cursor-pointer"
+              >
+                ‹ Prev
+              </button>
+
+              {/* Dynamic Page Numbers */}
+              {Array.from({ length: totalPages }, (_, i) => i + 1)
+                .filter((page) => page === 1 || page === totalPages || Math.abs(page - currentPage) <= 2)
+                .map((page, index, arr) => {
+                  const prevPage = arr[index - 1];
+                  const showDots = prevPage && page - prevPage > 1;
+                  return (
+                    <React.Fragment key={page}>
+                      {showDots && <span className="text-xs text-slate-500 px-1">...</span>}
+                      <button
+                        onClick={() => {
+                          setCurrentPage(page);
+                          window.scrollTo({ top: 300, behavior: 'smooth' });
+                        }}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                          currentPage === page
+                            ? 'bg-blue-600 text-white shadow-md shadow-blue-500/30 border border-blue-500'
+                            : 'bg-[#0b0f19] border border-[#232f48] text-slate-300 hover:bg-slate-800 hover:text-white'
+                        }`}
+                      >
+                        {page}
+                      </button>
+                    </React.Fragment>
+                  );
+                })}
+
+              {/* Next Page */}
+              <button
+                disabled={currentPage === totalPages}
+                onClick={() => {
+                  setCurrentPage((prev) => Math.min(prev + 1, totalPages));
+                  window.scrollTo({ top: 300, behavior: 'smooth' });
+                }}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#0b0f19] border border-[#232f48] text-slate-300 hover:bg-blue-600 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-all cursor-pointer"
+              >
+                Next ›
+              </button>
+
+              {/* Last Page */}
+              <button
+                disabled={currentPage === totalPages}
+                onClick={() => {
+                  setCurrentPage(totalPages);
+                  window.scrollTo({ top: 300, behavior: 'smooth' });
+                }}
+                className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-[#0b0f19] border border-[#232f48] text-slate-300 hover:bg-blue-600 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-all cursor-pointer"
+              >
+                Last »
+              </button>
+            </div>
+
+            {/* Items Per Page Select */}
+            <div className="flex items-center gap-2 text-xs text-slate-400">
+              <span>Per Page:</span>
+              <select
+                value={itemsPerPage}
+                onChange={(e) => {
+                  setItemsPerPage(Number(e.target.value));
+                  setCurrentPage(1);
+                }}
+                className="bg-[#0b0f19] border border-[#232f48] text-slate-200 text-xs px-2.5 py-1.5 rounded-lg outline-none cursor-pointer focus:border-blue-500"
+              >
+                <option value={12}>12 Ads</option>
+                <option value={24}>24 Ads</option>
+                <option value={48}>48 Ads</option>
+                <option value={96}>96 Ads</option>
+              </select>
+            </div>
+          </div>
+        )}
+      </>
       )}
 
       {/* Auth Modal (Login / Register) */}
       {showAuthModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fade-in">
-          <div className="bg-[#131b2e] border border-[#232f48] rounded-3xl p-6 w-full max-w-md shadow-2xl relative">
+          <div className="bg-[#131b2e] border border-[#232f48] rounded-3xl p-5 sm:p-6 w-full max-w-md max-h-[90vh] overflow-y-auto shadow-2xl relative">
             <button
               onClick={() => setShowAuthModal(false)}
               className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-full hover:bg-slate-800 transition-colors"
@@ -916,106 +1032,194 @@ export default function App() {
       {/* Profile & WhatsApp Settings Modal */}
       {showProfileModal && currentUser && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fade-in">
-          <div className="bg-[#131b2e] border border-[#232f48] rounded-3xl p-6 w-full max-w-md shadow-2xl relative">
-            <button
-              onClick={() => setShowProfileModal(false)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-full hover:bg-slate-800 transition-colors"
-            >
-              <X className="w-5 h-5" />
-            </button>
-
-            <div className="text-center mb-6">
-              <div className="inline-flex p-3 rounded-2xl bg-blue-500/10 border border-blue-500/30 text-blue-400 mb-3">
-                <Settings className="w-7 h-7" />
+          <div className="bg-[#131b2e] border border-[#232f48] rounded-3xl w-full max-w-md max-h-[85vh] flex flex-col shadow-2xl relative overflow-hidden">
+            
+            {/* Fixed Header */}
+            <div className="p-4 sm:p-5 border-b border-[#232f48] bg-[#0d121d] flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-xl bg-blue-500/10 border border-blue-500/30 text-blue-400">
+                  <Settings className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-base font-bold text-white">Profile & Alert Settings</h2>
+                  <p className="text-[11px] text-slate-400">Configure instant WhatsApp 3-Wheel notifications</p>
+                </div>
               </div>
-              <h2 className="text-xl font-bold text-white">Profile & Alert Settings</h2>
-              <p className="text-xs text-slate-400 mt-1">
-                Configure your WhatsApp phone number to receive instant 3-Wheel notifications.
-              </p>
+              <button
+                onClick={() => setShowProfileModal(false)}
+                className="text-slate-400 hover:text-white p-1.5 rounded-full hover:bg-slate-800 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
             </div>
 
-            {profileSuccess && (
-              <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 p-3 rounded-xl text-xs mb-4 text-center font-medium">
-                {profileSuccess}
-              </div>
-            )}
+            <form onSubmit={handleUpdateProfile} className="flex flex-col flex-1 overflow-hidden">
+              {/* Scrollable Form Body */}
+              <div className="p-4 sm:p-5 overflow-y-auto custom-scrollbar flex-1 space-y-4">
+                {profileSuccess && (
+                  <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 p-3 rounded-xl text-xs text-center font-medium">
+                    {profileSuccess}
+                  </div>
+                )}
 
-            {profileError && (
-              <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-3 rounded-xl text-xs mb-4 text-center font-medium">
-                {profileError}
-              </div>
-            )}
+                {profileError && (
+                  <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-3 rounded-xl text-xs text-center font-medium">
+                    {profileError}
+                  </div>
+                )}
 
-            <form onSubmit={handleUpdateProfile} className="space-y-4">
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">Full Name</label>
-                <div className="relative">
-                  <User className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
-                  <input
-                    type="text"
-                    required
-                    value={profileName}
-                    onChange={(e) => setProfileName(e.target.value)}
-                    className="w-full bg-[#0b0f19] border border-[#232f48] rounded-xl pl-9 pr-4 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">Email Address (Account ID)</label>
-                <div className="relative">
-                  <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
-                  <input
-                    type="email"
-                    disabled
-                    value={currentUser.email}
-                    className="w-full bg-[#0b0f19]/50 border border-[#232f48] rounded-xl pl-9 pr-4 py-2.5 text-xs text-slate-500 cursor-not-allowed"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">
-                  WhatsApp Alert Number
-                </label>
-                <div className="relative">
-                  <Smartphone className="w-4 h-4 text-emerald-400 absolute left-3 top-3" />
-                  <input
-                    type="text"
-                    value={profilePhone}
-                    onChange={(e) => setProfilePhone(e.target.value)}
-                    placeholder="94771234567"
-                    className="w-full bg-[#0b0f19] border border-[#232f48] rounded-xl pl-9 pr-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
-                <p className="text-[10px] text-slate-400 mt-1">
-                  Format: Country code + Number without + (e.g. <strong className="text-emerald-400">94771234567</strong>)
-                </p>
-              </div>
-
-              <div className="bg-[#0b0f19] border border-[#232f48] rounded-xl p-3.5 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Bell className="w-4 h-4 text-amber-400" />
-                  <div>
-                    <div className="text-xs font-semibold text-white">Instant Deal Alerts</div>
-                    <div className="text-[10px] text-slate-400">Receive WhatsApp alerts when new deals post</div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">Full Name</label>
+                  <div className="relative">
+                    <User className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                    <input
+                      type="text"
+                      required
+                      value={profileName}
+                      onChange={(e) => setProfileName(e.target.value)}
+                      className="w-full bg-[#0b0f19] border border-[#232f48] rounded-xl pl-9 pr-4 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500"
+                    />
                   </div>
                 </div>
-                <input
-                  type="checkbox"
-                  checked={profileSubscribed}
-                  onChange={(e) => setProfileSubscribed(e.target.checked)}
-                  className="w-4 h-4 accent-blue-600 rounded cursor-pointer"
-                />
+
+                <div>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">Email Address (Account ID)</label>
+                  <div className="relative">
+                    <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+                    <input
+                      type="email"
+                      disabled
+                      value={currentUser.email}
+                      className="w-full bg-[#0b0f19]/50 border border-[#232f48] rounded-xl pl-9 pr-4 py-2.5 text-xs text-slate-500 cursor-not-allowed"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">
+                    WhatsApp Alert Number
+                  </label>
+                  <div className="relative">
+                    <Smartphone className="w-4 h-4 text-emerald-400 absolute left-3 top-3" />
+                    <input
+                      type="text"
+                      value={profilePhone}
+                      onChange={(e) => setProfilePhone(e.target.value)}
+                      placeholder="94771234567"
+                      className="w-full bg-[#0b0f19] border border-[#232f48] rounded-xl pl-9 pr-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    Format: Country code + Number without + (e.g. <strong className="text-emerald-400">94771234567</strong>)
+                  </p>
+                </div>
+
+                {/* WhatsApp Custom Alert Filters Section */}
+                <div className="bg-[#0b0f19] border border-blue-500/30 rounded-2xl p-4 space-y-3.5 mt-3">
+                  <div className="flex items-center gap-2 border-b border-[#232f48] pb-2">
+                    <Filter className="w-4 h-4 text-blue-400" />
+                    <h4 className="text-xs font-bold text-white uppercase tracking-wider">🎯 Custom WhatsApp Alert Filters</h4>
+                  </div>
+
+                  {/* Target Location Filter */}
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-300 mb-1 flex items-center gap-1">
+                      <MapPin className="w-3.5 h-3.5 text-blue-400" />
+                      <span>Target District / City for Alerts</span>
+                    </label>
+                    <div className="relative">
+                      <select
+                        value={profileAlertLocation}
+                        onChange={(e) => setProfileAlertLocation(e.target.value)}
+                        className="w-full bg-[#151c2c] border border-[#232f48] rounded-xl px-3 py-2 text-xs text-white outline-none cursor-pointer focus:border-blue-500"
+                      >
+                        <option value="all">🌐 All Sri Lanka (ලංකාව පුරාම)</option>
+                        <option value="Matara">📍 Matara (මාතර)</option>
+                        <option value="Colombo">📍 Colombo (කොළඹ)</option>
+                        <option value="Gampaha">📍 Gampaha (ගම්පහ)</option>
+                        <option value="Kandy">📍 Kandy (මහනුවර)</option>
+                        <option value="Kurunegala">📍 Kurunegala (කුරුණෑගල)</option>
+                        <option value="Galle">📍 Galle (ගාල්ල)</option>
+                        <option value="Kalutara">📍 Kalutara (කළුතර)</option>
+                        <option value="Anuradhapura">📍 Anuradhapura (අනුරාධපුරය)</option>
+                        <option value="Ratnapura">📍 Ratnapura (රත්නපුරය)</option>
+                        <option value="Badulla">📍 Badulla (බදුල්ල)</option>
+                        <option value="Kamburupitiya">🏙️ Kamburupitiya (කඹුරුපිටිය)</option>
+                      </select>
+                    </div>
+                    <p className="text-[10px] text-slate-500 mt-1">
+                      Only receive WhatsApp messages for deals matching this location.
+                    </p>
+                  </div>
+
+                  {/* Target Model Filter */}
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-300 mb-1 flex items-center gap-1">
+                      <Layers className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Target Three-Wheel Model</span>
+                    </label>
+                    <select
+                      value={profileAlertModel}
+                      onChange={(e) => setProfileAlertModel(e.target.value)}
+                      className="w-full bg-[#151c2c] border border-[#232f48] rounded-xl px-3 py-2 text-xs text-white outline-none cursor-pointer focus:border-amber-500"
+                    >
+                      <option value="all">🌐 All Models (සියලුම Models)</option>
+                      <option value="4-stroke">🛺 4-Stroke (4-ස්ට්‍රෝක්)</option>
+                      <option value="2-stroke">🛺 2-Stroke (2-ස්ට්‍රෝක්)</option>
+                      <option value="tvs-king">🛺 TVS King</option>
+                      <option value="piaggio-ape">🛺 Piaggio Ape</option>
+                      <option value="bajaj-205">🛺 Bajaj RE 205</option>
+                    </select>
+                  </div>
+
+                  {/* Target Max Price Filter */}
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-300 mb-1 flex items-center gap-1">
+                      <Tag className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Max Price Limit (Optional)</span>
+                    </label>
+                    <input
+                      type="number"
+                      value={profileAlertMaxPrice}
+                      onChange={(e) => setProfileAlertMaxPrice(e.target.value)}
+                      placeholder="e.g. 2000000 (Rs. 20 Lakhs)"
+                      className="w-full bg-[#151c2c] border border-[#232f48] rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                    />
+                    <p className="text-[10px] text-slate-500 mt-1">
+                      Leave empty to receive alerts regardless of price.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="bg-[#0b0f19] border border-[#232f48] rounded-xl p-3.5 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Bell className="w-4 h-4 text-amber-400" />
+                    <div>
+                      <div className="text-xs font-semibold text-white">Instant Deal Alerts</div>
+                      <div className="text-[10px] text-slate-400 font-medium">
+                        Status: <strong className="text-emerald-400">ACTIVE ({profileAlertLocation === 'all' ? 'All Locations' : profileAlertLocation} • {profileAlertModel === 'all' ? 'All Models' : profileAlertModel})</strong>
+                      </div>
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={profileSubscribed}
+                    onChange={(e) => setProfileSubscribed(e.target.checked)}
+                    className="w-4 h-4 accent-blue-600 rounded cursor-pointer"
+                  />
+                </div>
               </div>
 
-              <button
-                type="submit"
-                disabled={profileLoading}
-                className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-3 rounded-xl text-xs transition-all shadow-lg shadow-emerald-500/20 cursor-pointer disabled:opacity-50 mt-2"
-              >
-                {profileLoading ? 'Saving...' : '💾 Save Profile Settings'}
-              </button>
+              {/* Fixed Footer with Save Button */}
+              <div className="p-4 border-t border-[#232f48] bg-[#0d121d]">
+                <button
+                  type="submit"
+                  disabled={profileLoading}
+                  className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-3 rounded-xl text-xs transition-all shadow-lg shadow-emerald-500/20 cursor-pointer disabled:opacity-50"
+                >
+                  {profileLoading ? 'Saving...' : '💾 Save Profile Settings'}
+                </button>
+              </div>
             </form>
           </div>
         </div>

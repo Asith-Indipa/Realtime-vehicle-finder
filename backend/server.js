@@ -209,6 +209,8 @@ const runScrapeCycle = async () => {
   }
 };
 
+const { cleanupOldListings } = require('./controllers/listingController');
+
 const PORT = process.env.PORT || 5000;
 
 // Connect Database & Launch Server
@@ -216,13 +218,17 @@ connectDB().then(() => {
   app.listen(PORT, () => {
     console.log(`🚀 [Server Ready] Running on http://localhost:${PORT}`);
     
-    // Initial scrape 3 seconds after server startup
-    setTimeout(runScrapeCycle, 3000);
+    // Initial cleanup & scrape 3 seconds after server startup
+    setTimeout(async () => {
+      await cleanupOldListings();
+      await runScrapeCycle();
+    }, 3000);
 
-    // Schedule automatic scraping cycle every 5 minutes
-    cron.schedule('*/5 * * * *', () => {
-      runScrapeCycle();
+    // Schedule automatic scraping & 7-day auto-cleanup cycle every 5 minutes
+    cron.schedule('*/5 * * * *', async () => {
+      await cleanupOldListings();
+      await runScrapeCycle();
     });
-    console.log('⏰ [Scheduler] Cron job registered: Running every 5 minutes.');
+    console.log('⏰ [Scheduler] Cron job registered: Running every 5 minutes (Auto-Scrape + 7-Day Cleanup).');
   });
 });

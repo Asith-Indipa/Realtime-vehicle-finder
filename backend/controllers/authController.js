@@ -50,6 +50,9 @@ const registerUser = async (req, res) => {
           email: user.email,
           whatsappNumber: user.whatsappNumber,
           isSubscribed: user.isSubscribed,
+          alertLocation: user.alertLocation,
+          alertModel: user.alertModel,
+          alertMaxPrice: user.alertMaxPrice,
         },
         token: generateToken(user._id),
       });
@@ -87,6 +90,9 @@ const loginUser = async (req, res) => {
           email: user.email,
           whatsappNumber: user.whatsappNumber,
           isSubscribed: user.isSubscribed,
+          alertLocation: user.alertLocation,
+          alertModel: user.alertModel,
+          alertMaxPrice: user.alertMaxPrice,
         },
         token: generateToken(user._id),
       });
@@ -140,6 +146,18 @@ const updateUserProfile = async (req, res) => {
         user.isSubscribed = Boolean(req.body.isSubscribed);
       }
 
+      if (req.body.alertLocation !== undefined) {
+        user.alertLocation = req.body.alertLocation ? req.body.alertLocation.trim() : 'all';
+      }
+
+      if (req.body.alertModel !== undefined) {
+        user.alertModel = req.body.alertModel ? req.body.alertModel.trim() : 'all';
+      }
+
+      if (req.body.alertMaxPrice !== undefined) {
+        user.alertMaxPrice = req.body.alertMaxPrice ? Number(req.body.alertMaxPrice) : null;
+      }
+
       if (req.body.password) {
         const salt = await bcrypt.genSalt(10);
         user.password = await bcrypt.hash(req.body.password, salt);
@@ -155,6 +173,9 @@ const updateUserProfile = async (req, res) => {
           email: updatedUser.email,
           whatsappNumber: updatedUser.whatsappNumber,
           isSubscribed: updatedUser.isSubscribed,
+          alertLocation: updatedUser.alertLocation,
+          alertModel: updatedUser.alertModel,
+          alertMaxPrice: updatedUser.alertMaxPrice,
         },
         token: generateToken(updatedUser._id),
       });

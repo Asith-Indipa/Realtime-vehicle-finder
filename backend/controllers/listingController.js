@@ -195,4 +195,48 @@ const getStats = async (req, res) => {
   }
 };
 
-module.exports = { getListings, getLocations, getLocationHierarchy, getStats };
+const { deleteCloudinaryImages } = require('../services/imageService');
+
+const cleanupOldListings = async (req, res) => {
+  try {
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+    const oldListings = await Listing.find({ postedTimestamp: { $lt: sevenDaysAgo } });
+
+    if (oldListings.length === 0) {
+      if (res) res.json({ success: true, message: 'No listings older than 7 days to clean up.' });
+      return { success: true, count: 0 };
+    }
+
+    const allImages = [];
+    oldListings.forEach((item) => {
+      if (item.images && Array.isArray(item.images)) {
+        allImages.push(...item.images);
+      }
+    });
+
+    if (allImages.length > 0) {
+      await deleteCloudinaryImages(allImages);
+    }
+
+    const deleteResult = await Listing.deleteMany({ postedTimestamp: { $lt: sevenDaysAgo } });
+    console.log(`🧹 [7-Day Auto-Cleanup] Purged ${deleteResult.deletedCount} listings and Cloudinary photos older than 7 days.`);
+
+    if (res) {
+      res.json({
+        success: true,
+        deletedCount: deleteResult.deletedCount,
+        photosDeleted: allImages.length,
+      });
+    }
+
+    return { success: true, count: deleteResult.deletedCount };
+  } catch (error) {
+    console.error('[Auto-Cleanup Error]', error.message);
+    if (res) res.status(500).json({ success: false, error: error.message });
+    return { success: false, error: error.message };
+  }
+};
+
+module.exports = { getListings, getLocations, getLocationHierarchy, getStats, cleanupOldListings };

@@ -49,4 +49,27 @@ const backupImages = async (imageUrls = []) => {
   return uploadedUrls;
 };
 
-module.exports = { backupImages };
+/**
+ * Deletes photos from Cloudinary given their secure URLs
+ * @param {Array<string>} imageUrls 
+ */
+const deleteCloudinaryImages = async (imageUrls = []) => {
+  if (!imageUrls || imageUrls.length === 0) return;
+  if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY) return;
+
+  for (const url of imageUrls) {
+    if (!url || typeof url !== 'string' || !url.includes('cloudinary.com')) continue;
+    try {
+      const match = url.match(/three_wheel_deals\/[^.]+/);
+      if (match && match[0]) {
+        const publicId = match[0];
+        await cloudinary.uploader.destroy(publicId);
+        console.log(`🗑️ [Cloudinary Auto-Delete] Removed photo: ${publicId}`);
+      }
+    } catch (err) {
+      console.error(`[Cloudinary Delete Warning] ${err.message}`);
+    }
+  }
+};
+
+module.exports = { backupImages, deleteCloudinaryImages };
