@@ -67,6 +67,10 @@ export default function App() {
   const [selectedModel, setSelectedModel] = useState('all');
   const [sortBy, setSortBy] = useState('latest');
   const [locationsList, setLocationsList] = useState([]);
+  const [locationHierarchy, setLocationHierarchy] = useState({});
+  const [showLocationModal, setShowLocationModal] = useState(false);
+  const [activeDistrict, setActiveDistrict] = useState('Colombo');
+  const [locationSearch, setLocationSearch] = useState('');
   const [whatsappInfo, setWhatsappInfo] = useState({ status: 'INITIALIZING', qrCodeImageUrl: null, ready: false });
   const [showQrModal, setShowQrModal] = useState(false);
   const [restartingWa, setRestartingWa] = useState(false);
@@ -220,13 +224,13 @@ export default function App() {
 
   const fetchLocations = async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/locations`);
+      const res = await fetch(`${API_BASE_URL}/locations/hierarchy`);
       const data = await res.json();
-      if (data.success && Array.isArray(data.data)) {
-        setLocationsList(data.data);
+      if (data.success && data.hierarchy) {
+        setLocationHierarchy(data.hierarchy);
       }
     } catch (e) {
-      console.error('Failed to fetch locations:', e);
+      console.error('Failed to fetch location hierarchy:', e);
     }
   };
 
@@ -570,19 +574,29 @@ export default function App() {
           <span>Price Drops Only</span>
         </button>
 
-        {/* Dynamic District / Location Filter */}
-        <select
-          className="bg-[#0b0f19] border border-[#232f48] text-sm text-slate-200 px-3.5 py-2.5 rounded-xl outline-none focus:border-blue-500 max-w-[200px]"
-          value={selectedLocation}
-          onChange={(e) => setSelectedLocation(e.target.value)}
+        {/* Location Selector Trigger Button */}
+        <button
+          onClick={() => setShowLocationModal(true)}
+          className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-sm font-semibold border transition-all cursor-pointer ${
+            selectedLocation !== 'all'
+              ? 'bg-blue-500/20 border-blue-500 text-blue-300 shadow-md shadow-blue-500/20'
+              : 'bg-[#0b0f19] border-[#232f48] text-slate-200 hover:border-slate-600'
+          }`}
         >
-          <option value="all">📍 All Locations (සියල්ල)</option>
-          {locationsList.map((loc) => (
-            <option key={loc} value={loc}>
-              📍 {loc}
-            </option>
-          ))}
-        </select>
+          <MapPin className="w-4 h-4 text-blue-400" />
+          <span>{selectedLocation === 'all' ? '📍 All Locations' : `📍 ${selectedLocation}`}</span>
+          {selectedLocation !== 'all' && (
+            <span
+              onClick={(e) => {
+                e.stopPropagation();
+                setSelectedLocation('all');
+              }}
+              className="ml-1 p-0.5 rounded-full hover:bg-blue-500/30 text-slate-400 hover:text-white"
+            >
+              ✕
+            </span>
+          )}
+        </button>
 
         {/* Engine / Model Type Filter */}
         <select
@@ -727,11 +741,14 @@ export default function App() {
                       </span>
                     )}
                   </div>
-
                   <div className="flex flex-col gap-1.5 text-xs text-slate-400 border-t border-[#232f48] pt-3 mt-auto">
                     <div className="flex items-center gap-1.5">
-                      <MapPin className="w-3.5 h-3.5 text-slate-400" />
-                      <span>{item.location}</span>
+                      <MapPin className="w-3.5 h-3.5 text-blue-400" />
+                      <span className="font-medium text-slate-300">
+                        {item.location && item.location !== 'Sri Lanka'
+                          ? item.location.replace(/,\s*Three\s*Wheelers/gi, '').trim()
+                          : 'Sri Lanka'}
+                      </span>
                     </div>
                     <div className="flex items-center gap-1.5 text-sky-400 font-medium">
                       <Clock className="w-3.5 h-3.5" />
@@ -1000,6 +1017,144 @@ export default function App() {
                 {profileLoading ? 'Saving...' : '💾 Save Profile Settings'}
               </button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Location Selector Modal */}
+      {showLocationModal && (
+        <div className="fixed inset-0 bg-black/75 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-[#151c2c] border border-[#232f48] rounded-3xl max-w-3xl w-full max-h-[85vh] overflow-hidden flex flex-col shadow-2xl">
+            {/* Modal Header */}
+            <div className="p-4 border-b border-[#232f48] flex items-center justify-between bg-[#0b0f19]">
+              <div className="flex items-center gap-2">
+                <MapPin className="w-5 h-5 text-blue-400" />
+                <h2 className="text-base font-bold text-white">Select Location (දිස්ත්‍රික්කය සහ නගරය)</h2>
+              </div>
+              <button
+                onClick={() => setShowLocationModal(false)}
+                className="p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Quick Search Input */}
+            <div className="p-3 bg-[#111726] border-b border-[#232f48]">
+              <div className="flex items-center gap-2 bg-[#0b0f19] border border-[#232f48] px-3.5 py-2 rounded-xl focus-within:border-blue-500">
+                <Search className="w-4 h-4 text-slate-400" />
+                <input
+                  type="text"
+                  className="bg-transparent border-none outline-none text-xs text-white placeholder-slate-500 w-full"
+                  placeholder="Search district or town (e.g. Weligama, Kandy, Maharagama)..."
+                  value={locationSearch}
+                  onChange={(e) => setLocationSearch(e.target.value)}
+                />
+                {locationSearch && (
+                  <button onClick={() => setLocationSearch('')} className="text-slate-400 hover:text-white text-xs cursor-pointer">
+                    Clear
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Split View: Left Districts, Right Cities */}
+            <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-[#232f48] overflow-hidden flex-1 min-h-[350px]">
+              {/* Left Column: Main Districts */}
+              <div className="overflow-y-auto max-h-[350px] md:max-h-[450px] p-2.5 space-y-1 bg-[#0d121f]">
+                <button
+                  onClick={() => {
+                    setSelectedLocation('all');
+                    setShowLocationModal(false);
+                  }}
+                  className={`w-full text-left px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-between cursor-pointer ${
+                    selectedLocation === 'all'
+                      ? 'bg-blue-600 text-white shadow-md'
+                      : 'text-slate-300 hover:bg-[#151c2c] hover:text-white'
+                  }`}
+                >
+                  <span>🌐 All of Sri Lanka (සියලුම දිස්ත්‍රික්ක)</span>
+                </button>
+
+                {Object.keys(locationHierarchy)
+                  .filter((dist) =>
+                    !locationSearch
+                      ? true
+                      : dist.toLowerCase().includes(locationSearch.toLowerCase()) ||
+                        (locationHierarchy[dist] &&
+                          locationHierarchy[dist].some((city) =>
+                            city.toLowerCase().includes(locationSearch.toLowerCase())
+                          ))
+                  )
+                  .map((dist) => {
+                    const isActive = activeDistrict === dist;
+                    return (
+                      <button
+                        key={dist}
+                        onClick={() => setActiveDistrict(dist)}
+                        className={`w-full text-left px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all flex items-center justify-between cursor-pointer ${
+                          isActive
+                            ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40 shadow-sm'
+                            : 'text-slate-300 hover:bg-[#151c2c] hover:text-white border border-transparent'
+                        }`}
+                      >
+                        <span className="flex items-center gap-2">
+                          <span>📍 {dist}</span>
+                        </span>
+                        <span className="text-[10px] text-slate-500 font-normal">›</span>
+                      </button>
+                    );
+                  })}
+              </div>
+
+              {/* Right Column: Sub-Locations / Cities for Active District */}
+              <div className="overflow-y-auto max-h-[350px] md:max-h-[450px] p-3 bg-[#151c2c]">
+                <div className="text-xs font-bold text-blue-400 mb-2 border-b border-[#232f48] pb-1.5 flex items-center justify-between">
+                  <span>{activeDistrict} Sub-Locations (නගර)</span>
+                </div>
+
+                <div className="space-y-1">
+                  <button
+                    onClick={() => {
+                      setSelectedLocation(activeDistrict);
+                      setShowLocationModal(false);
+                    }}
+                    className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                      selectedLocation === activeDistrict
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 border border-emerald-500/30'
+                    }`}
+                  >
+                    📍 All Ads in {activeDistrict} (මුළු දිස්ත්‍රික්කයම)
+                  </button>
+
+                  {(locationHierarchy[activeDistrict] || [])
+                    .filter((c) => !c.startsWith('All in '))
+                    .filter((c) =>
+                      !locationSearch ? true : c.toLowerCase().includes(locationSearch.toLowerCase())
+                    )
+                    .map((city) => {
+                      const isSelected = selectedLocation === city || selectedLocation === `${city}, ${activeDistrict}`;
+                      return (
+                        <button
+                          key={city}
+                          onClick={() => {
+                            setSelectedLocation(city);
+                            setShowLocationModal(false);
+                          }}
+                          className={`w-full text-left px-3 py-2 rounded-lg text-xs transition-all cursor-pointer border ${
+                            isSelected
+                              ? 'bg-blue-600 text-white font-bold border-blue-500'
+                              : 'bg-[#0b0f19]/60 text-slate-300 hover:bg-blue-900/30 hover:text-white border-[#232f48]'
+                          }`}
+                        >
+                          🏙️ {city}
+                        </button>
+                      );
+                    })}
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}

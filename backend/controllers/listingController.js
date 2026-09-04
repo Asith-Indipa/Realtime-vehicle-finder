@@ -87,12 +87,79 @@ const getListings = async (req, res) => {
   }
 };
 
+const SRI_LANKA_HIERARCHY = {
+  Colombo: ['All in Colombo', 'Colombo City', 'Maharagama', 'Nugegoda', 'Kaduwela', 'Piliyandala', 'Dehiwala', 'Homagama', 'Moratuwa', 'Malabe', 'Battaramulla', 'Kottawa', 'Avissawella', 'Kotte', 'Hanwella', 'Angoda', 'Wellampitiya'],
+  Gampaha: ['All in Gampaha', 'Gampaha City', 'Negombo', 'Kadawatha', 'Kiribathgoda', 'Ja-Ela', 'Wattala', 'Minuwangoda', 'Nittambuwa', 'Veyangoda', 'Ragama', 'Kelaniya', 'Mirigama', 'Delgoda', 'Ganemulla'],
+  Kandy: ['All in Kandy', 'Kandy City', 'Peradeniya', 'Katugastota', 'Gampola', 'Kundasale', 'Nawalapitiya', 'Akurana', 'Kadugannawa', 'Digana', 'Teldeniya', 'Wattegama', 'Pilimathalawa'],
+  Galle: ['All in Galle', 'Galle City', 'Hikkaduwa', 'Ambalangoda', 'Elpitiya', 'Bentota', 'Baddegama', 'Karapitiya', 'Ahangama', 'Koggala', 'Batapola'],
+  Matara: ['All in Matara', 'Matara City', 'Weligama', 'Akuressa', 'Dikwella', 'Deniyaya', 'Hakmana', 'Kamburupitiya', 'Kamburugamuwa', 'Gandara', 'Kekanadurra', 'Mirissa'],
+  Kurunegala: ['All in Kurunegala', 'Kurunegala City', 'Kuliyapitiya', 'Pannala', 'Mawathagama', 'Giriulla', 'Narammala', 'Wariyapola', 'Ibbagamuwa', 'Alawwa', 'Nikaweratiya'],
+  Kegalle: ['All in Kegalle', 'Kegalle City', 'Mawanella', 'Warakapola', 'Rambukkana', 'Dehiowita', 'Deraniyagala', 'Yatiyantota', 'Ruwanwella', 'Galigamuwa'],
+  Ratnapura: ['All in Ratnapura', 'Ratnapura City', 'Embilipitiya', 'Balangoda', 'Eheliyagoda', 'Pelmadulla', 'Kuruwita', 'Kahawatta', 'Rakwana'],
+  Kalutara: ['All in Kalutara', 'Kalutara City', 'Panadura', 'Horana', 'Matugama', 'Bandaragama', 'Beruwala', 'Aluthgama', 'Wadduwa', 'Ingiriya'],
+  Hambantota: ['All in Hambantota', 'Hambantota City', 'Tangalle', 'Beliatta', 'Ambalantota', 'Tissamaharama', 'Middeniya', 'Walasmulla', 'Suriyawewa'],
+  Badulla: ['All in Badulla', 'Badulla City', 'Bandarawela', 'Diyatalawa', 'Ella', 'Welimada', 'Mahiyanganaya', 'Hali-Ela', 'Passara'],
+  'Nuwara Eliya': ['All in Nuwara Eliya', 'Nuwara Eliya City', 'Hatton', 'Maskeliya', 'Ginigathena', 'Talawakele', 'Walapane', 'Hanguranketha'],
+  Anuradhapura: ['All in Anuradhapura', 'Anuradhapura City', 'Kekirawa', 'Eppawala', 'Medawachchiya', 'Galenbindunuwewa', 'Thambuttegama', 'Mihintale'],
+  Polonnaruwa: ['All in Polonnaruwa', 'Polonnaruwa City', 'Hingurakgoda', 'Kaduruwela', 'Medirigiriya'],
+  Ampara: ['All in Ampara', 'Ampara City', 'Kalmunai', 'Akkaraipattu', 'Sainthamaruthu', 'Sammanthurai'],
+  Batticaloa: ['All in Batticaloa', 'Batticaloa City', 'Kattankudy', 'Chenkalady', 'Eravur', 'Valachchenai'],
+  Trincomalee: ['All in Trincomalee', 'Trincomalee City', 'Kinniya', 'Kantale', 'China Bay'],
+  Jaffna: ['All in Jaffna', 'Jaffna City', 'Chavakachcheri', 'Nallur', 'Point Pedro', 'Chunnakam', 'Karainagar'],
+  Kilinochchi: ['All in Kilinochchi', 'Kilinochchi City', 'Pallai'],
+  Mannar: ['All in Mannar', 'Mannar City'],
+  Vavuniya: ['All in Vavuniya', 'Vavuniya City'],
+  Mullaitivu: ['All in Mullaitivu', 'Mullaitivu City'],
+  Moneragala: ['All in Moneragala', 'Moneragala City', 'Wellawaya', 'Bibile', 'Kataragama', 'Buttala'],
+  Matale: ['All in Matale', 'Matale City', 'Dambulla', 'Galewela', 'Sigiriya', 'Ukuwela', 'Yatawatta'],
+  Puttalam: ['All in Puttalam', 'Puttalam City', 'Chilaw', 'Wennappuwa', 'Marawila', 'Dankotuwa', 'Nattandiya', 'Anamaduwa']
+};
+
+const getLocationHierarchy = async (req, res) => {
+  try {
+    const rawLocations = await Listing.distinct('location');
+    const hierarchy = JSON.parse(JSON.stringify(SRI_LANKA_HIERARCHY));
+
+    rawLocations.forEach((loc) => {
+      if (!loc || loc.trim() === '' || loc === 'Sri Lanka') return;
+      const cleanLoc = loc.replace(/,\s*Three\s*Wheelers/gi, '').trim();
+      const parts = cleanLoc.split(',').map(p => p.trim());
+      
+      const city = parts[0];
+      const districtMatch = parts[1];
+
+      let targetDistrict = districtMatch && hierarchy[districtMatch] ? districtMatch : null;
+      if (!targetDistrict) {
+        for (const distKey of Object.keys(hierarchy)) {
+          if (cleanLoc.toLowerCase().includes(distKey.toLowerCase())) {
+            targetDistrict = distKey;
+            break;
+          }
+        }
+      }
+
+      if (targetDistrict && city) {
+        if (!hierarchy[targetDistrict].includes(city)) {
+          hierarchy[targetDistrict].push(city);
+        }
+      }
+    });
+
+    res.json({
+      success: true,
+      hierarchy,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
 const getLocations = async (req, res) => {
   try {
     const rawLocations = await Listing.distinct('location');
     const cleaned = rawLocations
       .filter((loc) => loc && loc.trim() !== '' && loc !== 'Sri Lanka')
-      .map((loc) => loc.trim())
+      .map((loc) => loc.replace(/,\s*Three\s*Wheelers/gi, '').trim())
       .sort((a, b) => a.localeCompare(b));
 
     const uniqueLocations = Array.from(new Set(cleaned));
@@ -128,4 +195,4 @@ const getStats = async (req, res) => {
   }
 };
 
-module.exports = { getListings, getLocations, getStats };
+module.exports = { getListings, getLocations, getLocationHierarchy, getStats };
