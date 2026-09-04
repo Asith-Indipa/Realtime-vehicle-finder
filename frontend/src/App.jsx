@@ -9,10 +9,16 @@ import {
   RefreshCw,
   Calendar,
   Sparkles,
-  Layers
+  Layers,
+  MessageSquare,
+  QrCode,
+  CheckCircle2,
+  X,
+  Smartphone
 } from 'lucide-react';
 
 const API_BASE_URL = 'http://localhost:5000/api/listings';
+const WHATSAPP_STATUS_URL = 'http://localhost:5000/api/whatsapp/status';
 
 /**
  * Dynamically calculates human-readable relative time from a Date/timestamp.
@@ -49,6 +55,32 @@ export default function App() {
   const [maxPrice, setMaxPrice] = useState('');
   const [timeRange, setTimeRange] = useState('all');
   const [priceDropOnly, setPriceDropOnly] = useState(false);
+  const [whatsappInfo, setWhatsappInfo] = useState({ status: 'INITIALIZING', qrCodeImageUrl: null, ready: false });
+  const [showQrModal, setShowQrModal] = useState(false);
+  const [restartingWa, setRestartingWa] = useState(false);
+  const [loggingOutWa, setLoggingOutWa] = useState(false);
+
+  const handleRestartWhatsApp = async () => {
+    setRestartingWa(true);
+    try {
+      await fetch('http://localhost:5000/api/whatsapp/restart', { method: 'POST' });
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setTimeout(() => setRestartingWa(false), 3000);
+    }
+  };
+
+  const handleLogoutWhatsApp = async () => {
+    setLoggingOutWa(true);
+    try {
+      await fetch('http://localhost:5000/api/whatsapp/logout', { method: 'POST' });
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setTimeout(() => setLoggingOutWa(false), 3000);
+    }
+  };
 
   const fetchData = async () => {
     try {
@@ -70,6 +102,13 @@ export default function App() {
       if (statsData.success) {
         setStats(statsData.stats);
       }
+
+      // Fetch WhatsApp Status
+      const waRes = await fetch(WHATSAPP_STATUS_URL);
+      const waData = await waRes.json();
+      if (waData.success) {
+        setWhatsappInfo(waData);
+      }
     } catch (err) {
       console.error('API Error:', err);
     } finally {
@@ -79,7 +118,7 @@ export default function App() {
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 8000);
+    const interval = setInterval(fetchData, 5000);
     return () => clearInterval(interval);
   }, [search, sourceFilter, maxPrice, timeRange, priceDropOnly]);
 
@@ -88,7 +127,94 @@ export default function App() {
     : listings;
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-6">
+    <div className="max-w-6xl mx-auto px-4 py-6 relative">
+      {/* WhatsApp QR Modal */}
+      {showQrModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-fade-in">
+          <div className="bg-[#151c2c] border border-[#232f48] rounded-3xl max-w-md w-full p-6 relative shadow-2xl">
+            <button
+              onClick={() => setShowQrModal(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-full hover:bg-slate-800 transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="text-center mb-5">
+              <div className="inline-flex p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 mb-3">
+                <MessageSquare className="w-7 h-7" />
+              </div>
+              <h2 className="text-xl font-bold text-white">WhatsApp Alert Connection</h2>
+              <p className="text-xs text-slate-400 mt-1">
+                {whatsappInfo.ready
+                  ? 'Your WhatsApp is currently connected and sending instant 3-Wheel alerts!'
+                  : 'Scan the QR code below using your mobile WhatsApp to activate instant alerts.'}
+              </p>
+            </div>
+
+            {whatsappInfo.ready ? (
+              <div className="bg-emerald-950/30 border border-emerald-500/40 rounded-2xl p-6 text-center my-4">
+                <CheckCircle2 className="w-16 h-16 text-emerald-400 mx-auto mb-3 animate-bounce" />
+                <h3 className="text-lg font-bold text-emerald-300">Connected & Active</h3>
+                <p className="text-xs text-slate-300 mt-2 mb-4">
+                  All new three-wheel deals and price drops will be sent automatically to your WhatsApp!
+                </p>
+                <button
+                  onClick={handleLogoutWhatsApp}
+                  disabled={loggingOutWa}
+                  className="bg-red-500/10 border border-red-500/30 hover:bg-red-500/20 text-red-400 text-xs font-semibold px-4 py-2 rounded-xl transition-all shadow-md cursor-pointer disabled:opacity-50 inline-flex items-center gap-2"
+                >
+                  {loggingOutWa ? 'Disconnecting...' : '🔴 Disconnect WhatsApp'}
+                </button>
+              </div>
+            ) : whatsappInfo.qrCodeImageUrl ? (
+              <div className="bg-[#0b0f19] border border-[#232f48] rounded-2xl p-5 text-center my-4 flex flex-col items-center">
+                <div className="bg-white p-3 rounded-2xl shadow-xl border border-slate-200">
+                  <img
+                    src={whatsappInfo.qrCodeImageUrl}
+                    alt="WhatsApp QR Code"
+                    className="w-56 h-56 object-contain"
+                  />
+                </div>
+                <div className="flex items-center gap-2 mt-4 text-xs text-amber-400 font-medium bg-amber-500/10 px-3 py-1.5 rounded-full border border-amber-500/20">
+                  <span className="w-2 h-2 bg-amber-400 rounded-full animate-ping"></span>
+                  <span>Waiting for scan...</span>
+                </div>
+              </div>
+            ) : (
+              <div className="bg-[#0b0f19] border border-[#232f48] rounded-2xl p-6 text-center my-4">
+                <RefreshCw className={`w-8 h-8 text-blue-400 mx-auto mb-3 ${restartingWa ? 'animate-spin' : ''}`} />
+                <p className="text-sm font-medium text-slate-300">
+                  {restartingWa ? 'Generating New WhatsApp QR Code...' : 'QR Code Not Ready'}
+                </p>
+                <p className="text-xs text-slate-400 mt-1 mb-4">
+                  If the QR code hasn't appeared yet, click below to generate a fresh QR Code instantly.
+                </p>
+                <button
+                  onClick={handleRestartWhatsApp}
+                  disabled={restartingWa}
+                  className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-4 py-2.5 rounded-xl transition-all shadow-lg shadow-blue-500/20 cursor-pointer disabled:opacity-50"
+                >
+                  {restartingWa ? 'Generating...' : '🔄 Generate New QR Code'}
+                </button>
+              </div>
+            )}
+
+            <div className="bg-[#0b0f19]/60 border border-[#232f48] rounded-xl p-4 text-xs text-slate-300 space-y-2">
+              <div className="font-semibold text-slate-200 flex items-center gap-1.5">
+                <Smartphone className="w-4 h-4 text-blue-400" />
+                <span>How to connect:</span>
+              </div>
+              <ol className="list-decimal list-inside space-y-1 text-slate-400">
+                <li>Open <strong>WhatsApp</strong> on your phone</li>
+                <li>Tap <strong>Settings</strong> or <strong>Menu (⋮)</strong></li>
+                <li>Select <strong>Linked Devices</strong> &gt; <strong>Link a Device</strong></li>
+                <li>Point your camera at this screen QR Code</li>
+              </ol>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center py-5 border-b border-[#232f48] mb-6 gap-4">
         <div className="flex items-center gap-3">
@@ -104,9 +230,33 @@ export default function App() {
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 px-3.5 py-1.5 rounded-full text-xs font-semibold">
-          <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse-slow shadow-sm shadow-emerald-500"></span>
-          <span>LIVE MONITORED (5 MIN AUTO-REFRESH)</span>
+
+        <div className="flex items-center gap-2">
+          {/* WhatsApp Status Button */}
+          <button
+            onClick={() => setShowQrModal(true)}
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-semibold border transition-all cursor-pointer shadow-md ${
+              whatsappInfo.ready
+                ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/20'
+                : whatsappInfo.qrCodeImageUrl
+                  ? 'bg-amber-500/10 border-amber-500/40 text-amber-400 animate-pulse hover:bg-amber-500/20 ring-2 ring-amber-500/30'
+                  : 'bg-slate-800/80 border-slate-700 text-slate-300 hover:bg-slate-700'
+            }`}
+          >
+            <MessageSquare className="w-3.5 h-3.5" />
+            <span>
+              {whatsappInfo.ready
+                ? '🟢 WhatsApp Connected'
+                : whatsappInfo.qrCodeImageUrl
+                  ? '📱 Scan WhatsApp QR'
+                  : '⏳ WhatsApp Loading...'}
+            </span>
+          </button>
+
+          <div className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 px-3.5 py-1.5 rounded-full text-xs font-semibold">
+            <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse-slow shadow-sm shadow-emerald-500"></span>
+            <span>LIVE (5 MIN AUTO)</span>
+          </div>
         </div>
       </header>
 

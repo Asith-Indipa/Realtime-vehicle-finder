@@ -7,7 +7,7 @@ const Listing = require('./models/Listing');
 const { scrapeIkman } = require('./services/ikmanScraper');
 const { scrapeRiyasevana } = require('./services/riyasevanaScraper');
 const { backupImages } = require('./services/imageService');
-const { sendWhatsAppAlert, sendWhatsAppPriceDropAlert } = require('./services/whatsappService');
+const { sendWhatsAppAlert, sendWhatsAppPriceDropAlert, getWhatsAppStatus, restartWhatsAppBot, logoutWhatsAppBot } = require('./services/whatsappService');
 const listingRoutes = require('./routes/listingRoutes');
 
 const app = express();
@@ -16,6 +16,23 @@ app.use(express.json());
 
 // API Routes
 app.use('/api/listings', listingRoutes);
+
+app.get('/api/whatsapp/status', (req, res) => {
+  res.json({
+    success: true,
+    ...getWhatsAppStatus(),
+  });
+});
+
+app.post('/api/whatsapp/restart', async (req, res) => {
+  restartWhatsAppBot();
+  res.json({ success: true, message: 'WhatsApp Bot restarting...' });
+});
+
+app.post('/api/whatsapp/logout', async (req, res) => {
+  logoutWhatsAppBot();
+  res.json({ success: true, message: 'WhatsApp Bot logging out...' });
+});
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
