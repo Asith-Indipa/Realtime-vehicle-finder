@@ -63,6 +63,10 @@ export default function App() {
   const [maxPrice, setMaxPrice] = useState('');
   const [timeRange, setTimeRange] = useState('all');
   const [priceDropOnly, setPriceDropOnly] = useState(false);
+  const [selectedLocation, setSelectedLocation] = useState('all');
+  const [selectedModel, setSelectedModel] = useState('all');
+  const [sortBy, setSortBy] = useState('latest');
+  const [locationsList, setLocationsList] = useState([]);
   const [whatsappInfo, setWhatsappInfo] = useState({ status: 'INITIALIZING', qrCodeImageUrl: null, ready: false });
   const [showQrModal, setShowQrModal] = useState(false);
   const [restartingWa, setRestartingWa] = useState(false);
@@ -214,6 +218,22 @@ export default function App() {
     }
   };
 
+  const fetchLocations = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/locations`);
+      const data = await res.json();
+      if (data.success && Array.isArray(data.data)) {
+        setLocationsList(data.data);
+      }
+    } catch (e) {
+      console.error('Failed to fetch locations:', e);
+    }
+  };
+
+  useEffect(() => {
+    fetchLocations();
+  }, []);
+
   const fetchData = async () => {
     try {
       let url = `${API_BASE_URL}?limit=200`;
@@ -222,6 +242,9 @@ export default function App() {
       if (maxPrice) url += `&maxPrice=${maxPrice}`;
       if (timeRange) url += `&timeRange=${timeRange}`;
       if (priceDropOnly) url += `&priceDropOnly=true`;
+      if (selectedLocation && selectedLocation !== 'all') url += `&location=${encodeURIComponent(selectedLocation)}`;
+      if (selectedModel && selectedModel !== 'all') url += `&modelType=${encodeURIComponent(selectedModel)}`;
+      if (sortBy) url += `&sortBy=${encodeURIComponent(sortBy)}`;
 
       const res = await fetch(url);
       const data = await res.json();
@@ -255,7 +278,7 @@ export default function App() {
     fetchData();
     const interval = setInterval(fetchData, 5000);
     return () => clearInterval(interval);
-  }, [search, sourceFilter, maxPrice, timeRange, priceDropOnly]);
+  }, [search, sourceFilter, maxPrice, timeRange, priceDropOnly, selectedLocation, selectedModel, sortBy]);
 
   // Fast 1-second interval dedicated for instant WhatsApp QR scan & connection detection
   useEffect(() => {
@@ -547,6 +570,34 @@ export default function App() {
           <span>Price Drops Only</span>
         </button>
 
+        {/* Dynamic District / Location Filter */}
+        <select
+          className="bg-[#0b0f19] border border-[#232f48] text-sm text-slate-200 px-3.5 py-2.5 rounded-xl outline-none focus:border-blue-500 max-w-[200px]"
+          value={selectedLocation}
+          onChange={(e) => setSelectedLocation(e.target.value)}
+        >
+          <option value="all">📍 All Locations (සියල්ල)</option>
+          {locationsList.map((loc) => (
+            <option key={loc} value={loc}>
+              📍 {loc}
+            </option>
+          ))}
+        </select>
+
+        {/* Engine / Model Type Filter */}
+        <select
+          className="bg-[#0b0f19] border border-[#232f48] text-sm text-slate-200 px-3.5 py-2.5 rounded-xl outline-none focus:border-blue-500"
+          value={selectedModel}
+          onChange={(e) => setSelectedModel(e.target.value)}
+        >
+          <option value="all">🛺 All Models (මාදිලි)</option>
+          <option value="2-stroke">⚡ 2-Stroke</option>
+          <option value="4-stroke">🔥 4-Stroke</option>
+          <option value="tvs-king">👑 TVS King</option>
+          <option value="piaggio-ape">🛺 Piaggio Ape</option>
+          <option value="bajaj-205">💪 Bajaj RE 205</option>
+        </select>
+
         <select
           className="bg-[#0b0f19] border border-[#232f48] text-sm text-slate-200 px-3.5 py-2.5 rounded-xl outline-none focus:border-blue-500"
           value={sourceFilter}
@@ -566,6 +617,19 @@ export default function App() {
           <option value="500000">Under Rs 500,000</option>
           <option value="800000">Under Rs 800,000</option>
           <option value="1000000">Under Rs 1,000,000</option>
+        </select>
+
+        {/* Sorting Options */}
+        <select
+          className="bg-[#0b0f19] border border-[#232f48] text-sm text-blue-400 font-semibold px-3.5 py-2.5 rounded-xl outline-none focus:border-blue-500"
+          value={sortBy}
+          onChange={(e) => setSortBy(e.target.value)}
+        >
+          <option value="latest">⏱️ Sort: Latest Deals</option>
+          <option value="price_asc">💰 Price: Low → High</option>
+          <option value="price_desc">💎 Price: High → Low</option>
+          <option value="year_desc">📅 Year: Newest First</option>
+          <option value="year_asc">📆 Year: Oldest First</option>
         </select>
 
         <button 
