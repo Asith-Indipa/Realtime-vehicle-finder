@@ -176,6 +176,15 @@ const setupClientEvents = (clientInstance) => {
 
 setupClientEvents(client);
 
+// Guard against temporary Puppeteer navigation context destruction errors during WhatsApp login
+process.on('unhandledRejection', (reason) => {
+  if (reason && reason.message && reason.message.includes('Execution context was destroyed')) {
+    console.log('[WhatsApp Bot Guard] Handled temporary page navigation during authentication.');
+    return;
+  }
+  console.error('[Unhandled Promise Rejection]', reason);
+});
+
 // ──────────────────────────────────────────────────────────────
 // 7. INITIALIZATION & RESTART
 // ──────────────────────────────────────────────────────────────
@@ -240,56 +249,115 @@ const restartWhatsAppBot = async () => {
   }
 };
 
+const User = require('../models/User');
+
 /**
- * Sends instant WhatsApp alert for a newly detected listing
- * @param {Object} listing 
- * @param {string} targetPhone 
+ * Retrieves all valid, active subscriber phone numbers from MongoDB + .env
  */
-const sendWhatsAppAlert = async (listing, targetPhone = process.env.ALERT_PHONE_NUMBER) => {
+const getSubscribedPhoneNumbers = async () => {
+  const phones = new Set();
+  
+  if (process.env.ALERT_PHONE_NUMBER && process.env.ALERT_PHONE_NUMBER.trim()) {
+    const envPhone = process.env.ALERT_PHONE_NUMBER.trim().replace(/[^0-9]/g, '');
+    if (envPhone) phones.add(envPhone);
+  }
+
+  try {
+    const users = await User.find({ isSubscribed: true, whatsappNumber: { $exists: true, $ne: '' } });
+    for (const u of users) {
+      if (u.whatsappNumber) {
+        const cleanP = u.whatsappNumber.trim().replace(/[^0-9]/g, '');
+        if (cleanP) phones.add(cleanP);
+      }
+    }
+  } catch (err) {
+    console.error('[WhatsApp Service] Subscriber fetch error:', err.message);
+  }
+
+  return Array.from(phones);
+};
+
+/**
+ * Resolves a raw phone number into a valid WhatsApp JID (e.g. 94771234567@c.us)
+ */
+const resolveTargetJid = async (rawPhone) => {
+  const cleanP = rawPhone.trim().replace(/[^0-9]/g, '');
+  if (!cleanP) return null;
+
+  try {
+    if (client && client.getNumberId) {
+      const numberDetails = await client.getNumberId(cleanP);
+      if (numberDetails && numberDetails._serialized) {
+        return numberDetails._serialized;
+      }
+    }
+  } catch (e) {
+    console.log(`[WhatsApp Lookup Note] Fallback JID for ${cleanP}`);
+  }
+  return `${cleanP}@c.us`;
+};
+
+/**
+ * Sends instant WhatsApp alert for a newly detected listing to all active subscribers
+ * @param {Object} listing 
+ */
+const sendWhatsAppAlert = async (listing) => {
   if (!clientReady) {
     console.log(`[WhatsApp] Client not authenticated yet. Skipping instant alert for: ${listing.title}`);
     return false;
   }
 
   try {
-    let formattedPhone = targetPhone ? targetPhone.trim() : '';
-    if (!formattedPhone) {
-      console.log('[WhatsApp] No target phone number specified in ALERT_PHONE_NUMBER in .env');
+    const phoneNumbers = await getSubscribedPhoneNumbers();
+    if (phoneNumbers.length === 0) {
+      console.log('[WhatsApp] No subscribed phone numbers found in DB or .env');
       return false;
-    }
-
-    if (!formattedPhone.endsWith('@c.us')) {
-      formattedPhone = `${formattedPhone.replace(/[^0-9]/g, '')}@c.us`;
     }
 
     const imageToUse = (listing.originalImages && listing.originalImages.length > 0)
       ? listing.originalImages[0]
       : null;
 
+    const sellerContact = (listing.phone && listing.phone !== 'N/A' && listing.phone.trim() !== '')
+      ? listing.phone.trim()
+      : 'Available on Direct Link';
+
     const messageText = `🚨 *NEW THREE-WHEEL DEAL DETECTED!* 🛺
 
 📌 *${listing.title}*
 💰 *Price:* ${listing.price}
 📍 *Location:* ${listing.location}
+📞 *Seller Contact:* ${sellerContact}
 🌐 *Source:* ${listing.source}
-⏰ *Time:* ${listing.postedTimeText || 'Just now'}
 
 🔗 *Direct Link:* ${listing.sourceUrl}`;
 
-    if (imageToUse) {
+    let successCount = 0;
+    for (const rawPhone of phoneNumbers) {
       try {
-        const media = await MessageMedia.fromUrl(imageToUse);
-        await client.sendMessage(formattedPhone, media, { caption: messageText });
-      } catch (mediaErr) {
-        console.error('[WhatsApp Media Error] Fallback to text message:', mediaErr.message);
-        await client.sendMessage(formattedPhone, messageText);
+        const targetJid = await resolveTargetJid(rawPhone);
+        if (!targetJid) continue;
+
+        if (imageToUse) {
+          try {
+            const media = await MessageMedia.fromUrl(imageToUse);
+            await client.sendMessage(targetJid, media, { caption: messageText });
+          } catch (mediaErr) {
+            console.log(`[WhatsApp Media Warning for ${targetJid}] ${mediaErr.message}. Sending text alert...`);
+            await client.sendMessage(targetJid, messageText);
+          }
+        } else {
+          await client.sendMessage(targetJid, messageText);
+        }
+        successCount++;
+        console.log(`[WhatsApp Alert Delivered] Sent to ${targetJid}`);
+      } catch (err) {
+        console.error(`[WhatsApp Send Error to ${rawPhone}] ${err.message}`);
       }
-    } else {
-      await client.sendMessage(formattedPhone, messageText);
     }
 
-    console.log(`[WhatsApp Alert Sent] Successfully sent alert for "${listing.title}" to ${formattedPhone}`);
-    return true;
+    console.log(`[WhatsApp Alert Sent] Broadcasted "${listing.title}" to ${successCount} subscriber(s).`);
+    return successCount > 0;
   } catch (error) {
     console.error(`[WhatsApp Send Error] ${error.message}`);
     return false;
@@ -297,23 +365,18 @@ const sendWhatsAppAlert = async (listing, targetPhone = process.env.ALERT_PHONE_
 };
 
 /**
- * Sends instant WhatsApp alert when a price drop is detected
+ * Sends instant WhatsApp alert when a price drop is detected to all active subscribers
  * @param {Object} listing 
- * @param {string} targetPhone 
  */
-const sendWhatsAppPriceDropAlert = async (listing, targetPhone = process.env.ALERT_PHONE_NUMBER) => {
+const sendWhatsAppPriceDropAlert = async (listing) => {
   if (!clientReady) {
     console.log(`[WhatsApp] Client not authenticated. Skipping price drop alert for: ${listing.title}`);
     return false;
   }
 
   try {
-    let formattedPhone = targetPhone ? targetPhone.trim() : '';
-    if (!formattedPhone) return false;
-
-    if (!formattedPhone.endsWith('@c.us')) {
-      formattedPhone = `${formattedPhone.replace(/[^0-9]/g, '')}@c.us`;
-    }
+    const phoneNumbers = await getSubscribedPhoneNumbers();
+    if (phoneNumbers.length === 0) return false;
 
     const imageToUse = (listing.originalImages && listing.originalImages.length > 0)
       ? listing.originalImages[0]
@@ -321,29 +384,46 @@ const sendWhatsAppPriceDropAlert = async (listing, targetPhone = process.env.ALE
 
     const formattedDrop = listing.priceDropAmount ? `Rs. ${listing.priceDropAmount.toLocaleString()}` : '';
 
+    const sellerContact = (listing.phone && listing.phone !== 'N/A' && listing.phone.trim() !== '')
+      ? listing.phone.trim()
+      : 'Available on Direct Link';
+
     const messageText = `📉 *PRICE DROP ALERT!* 🔥 🛺
 
 📌 *${listing.title}*
 💰 *New Price:* ${listing.price} (Was: ~${listing.previousPrice || 'higher'}~)
 💥 *SAVED:* ${formattedDrop} OFF!
 📍 *Location:* ${listing.location}
+📞 *Seller Contact:* ${sellerContact}
 🌐 *Source:* ${listing.source}
 
 🔗 *Direct Link:* ${listing.sourceUrl}`;
 
-    if (imageToUse) {
+    let successCount = 0;
+    for (const rawPhone of phoneNumbers) {
       try {
-        const media = await MessageMedia.fromUrl(imageToUse);
-        await client.sendMessage(formattedPhone, media, { caption: messageText });
-      } catch (mediaErr) {
-        await client.sendMessage(formattedPhone, messageText);
+        const targetJid = await resolveTargetJid(rawPhone);
+        if (!targetJid) continue;
+
+        if (imageToUse) {
+          try {
+            const media = await MessageMedia.fromUrl(imageToUse);
+            await client.sendMessage(targetJid, media, { caption: messageText });
+          } catch (mediaErr) {
+            await client.sendMessage(targetJid, messageText);
+          }
+        } else {
+          await client.sendMessage(targetJid, messageText);
+        }
+        successCount++;
+        console.log(`[WhatsApp Price Drop Delivered] Sent to ${targetJid}`);
+      } catch (err) {
+        console.error(`[WhatsApp Price Drop Send Error to ${rawPhone}] ${err.message}`);
       }
-    } else {
-      await client.sendMessage(formattedPhone, messageText);
     }
 
-    console.log(`[WhatsApp Price Drop Alert Sent] "${listing.title}" to ${formattedPhone}`);
-    return true;
+    console.log(`[WhatsApp Price Drop Alert Sent] Broadcasted "${listing.title}" to ${successCount} subscriber(s).`);
+    return successCount > 0;
   } catch (error) {
     console.error(`[WhatsApp Send Error] ${error.message}`);
     return false;

@@ -9,6 +9,7 @@ const { scrapeRiyasevana } = require('./services/riyasevanaScraper');
 const { backupImages } = require('./services/imageService');
 const { sendWhatsAppAlert, sendWhatsAppPriceDropAlert, getWhatsAppStatus, restartWhatsAppBot, logoutWhatsAppBot } = require('./services/whatsappService');
 const listingRoutes = require('./routes/listingRoutes');
+const authRoutes = require('./routes/authRoutes');
 
 const app = express();
 app.use(cors());
@@ -16,6 +17,7 @@ app.use(express.json());
 
 // API Routes
 app.use('/api/listings', listingRoutes);
+app.use('/api/auth', authRoutes);
 
 app.get('/api/whatsapp/status', (req, res) => {
   res.json({
@@ -37,6 +39,66 @@ app.post('/api/whatsapp/logout', async (req, res) => {
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
 });
+
+const puppeteer = require('puppeteer-core');
+const fs = require('fs');
+
+const findChromePath = () => {
+  const commonPaths = [
+    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+    process.env.LOCALAPPDATA + '\\Google\\Chrome\\Application\\chrome.exe',
+  ];
+  for (const p of commonPaths) {
+    if (p && fs.existsSync(p)) return p;
+  }
+  return null;
+};
+
+/**
+ * Fetches the seller's contact phone number directly from the detail page URL using Puppeteer (prevents 403 Forbidden)
+ */
+const fetchSellerPhone = async (sourceUrl, source) => {
+  let browser = null;
+  try {
+    const chromePath = findChromePath();
+    if (!chromePath) return null;
+
+    browser = await puppeteer.launch({
+      executablePath: chromePath,
+      headless: 'new',
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+    });
+
+    const page = await browser.newPage();
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
+    await page.goto(sourceUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+
+    const phone = await page.evaluate(() => {
+      const telEl = document.querySelector('a[href^="tel:"]');
+      if (telEl) {
+        const href = telEl.getAttribute('href') || '';
+        const cleaned = href.replace('tel:', '').trim();
+        if (cleaned) return cleaned;
+        if (telEl.innerText.trim()) return telEl.innerText.trim();
+      }
+
+      // Check contact boxes or general text
+      const pageText = document.body.innerText;
+      const match = pageText.match(/(?:07[0-8]\d{7}|0[1-9]\d{8})/);
+      return match ? match[0] : null;
+    });
+
+    return phone;
+  } catch (e) {
+    console.log(`[Phone Extractor Note] Detail page check for ${sourceUrl}: ${e.message}`);
+    return null;
+  } finally {
+    if (browser) {
+      await browser.close().catch(() => {});
+    }
+  }
+};
 
 // Master Scraping & Alert Execution Loop
 const runScrapeCycle = async () => {
@@ -120,15 +182,24 @@ const runScrapeCycle = async () => {
       });
 
       newItemsCount++;
-      if (!duplicateEntry) {
-        console.log(`✨ [NEW DEAL DETECTED] [${ad.source}] ${ad.title} (${ad.price})`);
+      const dealLabel = duplicateEntry ? 'REPOSTED DEAL' : 'NEW DEAL';
+      console.log(`✨ [${dealLabel}] [${ad.source}] ${ad.title} (${ad.price})`);
 
-        // Trigger instant WhatsApp alert
-        const sent = await sendWhatsAppAlert(newListing);
-        if (sent) {
-          newListing.notifiedWhatsApp = true;
+      // Extract seller phone number directly from detail page if not present using Puppeteer
+      if (!newListing.phone || newListing.phone === 'N/A') {
+        const detailPhone = await fetchSellerPhone(newListing.sourceUrl, newListing.source);
+        if (detailPhone) {
+          newListing.phone = detailPhone;
           await newListing.save();
+          console.log(`📞 [Seller Phone Extracted] ${detailPhone} for ${newListing.title}`);
         }
+      }
+
+      // Trigger instant WhatsApp alert for EVERY deal that posts on the website grid
+      const sent = await sendWhatsAppAlert(newListing);
+      if (sent) {
+        newListing.notifiedWhatsApp = true;
+        await newListing.save();
       }
     }
 

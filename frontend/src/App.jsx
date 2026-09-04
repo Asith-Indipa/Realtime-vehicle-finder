@@ -14,11 +14,19 @@ import {
   QrCode,
   CheckCircle2,
   X,
-  Smartphone
+  Smartphone,
+  User,
+  Lock,
+  Mail,
+  Settings,
+  LogOut,
+  Bell,
+  ShieldCheck
 } from 'lucide-react';
 
 const API_BASE_URL = 'http://localhost:5000/api/listings';
 const WHATSAPP_STATUS_URL = 'http://localhost:5000/api/whatsapp/status';
+const AUTH_API_URL = 'http://localhost:5000/api/auth';
 
 /**
  * Dynamically calculates human-readable relative time from a Date/timestamp.
@@ -60,6 +68,34 @@ export default function App() {
   const [restartingWa, setRestartingWa] = useState(false);
   const [loggingOutWa, setLoggingOutWa] = useState(false);
 
+  // Authentication & Profile States
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      const saved = localStorage.getItem('user');
+      return saved ? JSON.parse(saved) : null;
+    } catch (e) {
+      return null;
+    }
+  });
+  const [token, setToken] = useState(() => localStorage.getItem('token') || '');
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authTab, setAuthTab] = useState('login'); // 'login' | 'register'
+  const [authName, setAuthName] = useState('');
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authPhone, setAuthPhone] = useState('');
+  const [authError, setAuthError] = useState('');
+  const [authLoading, setAuthLoading] = useState(false);
+
+  // Profile Settings States
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [profileName, setProfileName] = useState('');
+  const [profilePhone, setProfilePhone] = useState('');
+  const [profileSubscribed, setProfileSubscribed] = useState(true);
+  const [profileSuccess, setProfileSuccess] = useState('');
+  const [profileError, setProfileError] = useState('');
+  const [profileLoading, setProfileLoading] = useState(false);
+
   const handleRestartWhatsApp = async () => {
     setRestartingWa(true);
     try {
@@ -79,6 +115,102 @@ export default function App() {
       console.error(e);
     } finally {
       setTimeout(() => setLoggingOutWa(false), 3000);
+    }
+  };
+
+  const handleAuthSubmit = async (e) => {
+    e.preventDefault();
+    setAuthError('');
+    setAuthLoading(true);
+
+    try {
+      const endpoint = authTab === 'login' ? `${AUTH_API_URL}/login` : `${AUTH_API_URL}/register`;
+      const payload = authTab === 'login' 
+        ? { email: authEmail, password: authPassword }
+        : { name: authName, email: authEmail, password: authPassword, whatsappNumber: authPhone };
+
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json();
+      if (!data.success) {
+        throw new Error(data.message || 'Authentication failed');
+      }
+
+      // Save user & token
+      localStorage.setItem('user', JSON.stringify(data.user));
+      localStorage.setItem('token', data.token);
+      setCurrentUser(data.user);
+      setToken(data.token);
+
+      // Close modal & reset form
+      setShowAuthModal(false);
+      setAuthPassword('');
+      setAuthError('');
+    } catch (err) {
+      setAuthError(err.message);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleLogoutUser = () => {
+    localStorage.removeItem('user');
+    localStorage.removeItem('token');
+    setCurrentUser(null);
+    setToken('');
+    setShowProfileModal(false);
+  };
+
+  const handleOpenProfile = () => {
+    if (!currentUser) return;
+    setProfileName(currentUser.name || '');
+    setProfilePhone(currentUser.whatsappNumber || '');
+    setProfileSubscribed(currentUser.isSubscribed !== false);
+    setProfileSuccess('');
+    setProfileError('');
+    setShowProfileModal(true);
+  };
+
+  const handleUpdateProfile = async (e) => {
+    e.preventDefault();
+    setProfileError('');
+    setProfileSuccess('');
+    setProfileLoading(true);
+
+    try {
+      const res = await fetch(`${AUTH_API_URL}/profile`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          name: profileName,
+          whatsappNumber: profilePhone,
+          isSubscribed: profileSubscribed,
+        }),
+      });
+
+      const data = await res.json();
+      if (!data.success) {
+        throw new Error(data.message || 'Failed to update profile');
+      }
+
+      localStorage.setItem('user', JSON.stringify(data.user));
+      if (data.token) localStorage.setItem('token', data.token);
+      setCurrentUser(data.user);
+      if (data.token) setToken(data.token);
+
+      setProfileSuccess('✅ Profile & WhatsApp settings updated successfully!');
+      setTimeout(() => setShowProfileModal(false), 1500);
+    } catch (err) {
+      setProfileError(err.message);
+    } finally {
+      setProfileLoading(false);
     }
   };
 
@@ -108,6 +240,9 @@ export default function App() {
       const waData = await waRes.json();
       if (waData.success) {
         setWhatsappInfo(waData);
+        if (waData.ready && showQrModal) {
+          setShowQrModal(false);
+        }
       }
     } catch (err) {
       console.error('API Error:', err);
@@ -121,6 +256,26 @@ export default function App() {
     const interval = setInterval(fetchData, 5000);
     return () => clearInterval(interval);
   }, [search, sourceFilter, maxPrice, timeRange, priceDropOnly]);
+
+  // Fast 1-second interval dedicated for instant WhatsApp QR scan & connection detection
+  useEffect(() => {
+    const checkWaStatus = async () => {
+      try {
+        const waRes = await fetch(WHATSAPP_STATUS_URL);
+        const waData = await waRes.json();
+        if (waData.success) {
+          setWhatsappInfo(waData);
+          if (waData.ready && showQrModal) {
+            setShowQrModal(false);
+          }
+        }
+      } catch (e) {}
+    };
+
+    // If not connected yet, check every 1 second for instant detection upon scanning
+    const fastPoll = setInterval(checkWaStatus, whatsappInfo.ready ? 5000 : 1000);
+    return () => clearInterval(fastPoll);
+  }, [whatsappInfo.ready, showQrModal]);
 
   const displayedListings = priceDropOnly
     ? listings.filter((item) => item.hasPriceDrop === true)
@@ -231,7 +386,39 @@ export default function App() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {/* User Auth & Settings Badge */}
+          {currentUser ? (
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={handleOpenProfile}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-blue-500/10 border border-blue-500/30 text-blue-400 hover:bg-blue-500/20 transition-all cursor-pointer"
+              >
+                <User className="w-3.5 h-3.5 text-blue-400" />
+                <span>{currentUser.name}</span>
+                <Settings className="w-3.5 h-3.5 ml-1 text-slate-400 hover:text-white" />
+              </button>
+              <button
+                onClick={handleLogoutUser}
+                title="Logout"
+                className="p-2 rounded-full text-xs text-slate-400 hover:text-red-400 hover:bg-red-500/10 border border-slate-800 transition-all cursor-pointer"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => {
+                setAuthError('');
+                setShowAuthModal(true);
+              }}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-gradient-to-r from-blue-600 to-blue-500 text-white hover:from-blue-500 hover:to-blue-400 transition-all cursor-pointer shadow-md shadow-blue-500/20"
+            >
+              <User className="w-3.5 h-3.5" />
+              <span>Login / Register</span>
+            </button>
+          )}
+
           {/* WhatsApp Status Button */}
           <button
             onClick={() => setShowQrModal(true)}
@@ -512,6 +699,244 @@ export default function App() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Auth Modal (Login / Register) */}
+      {showAuthModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fade-in">
+          <div className="bg-[#131b2e] border border-[#232f48] rounded-3xl p-6 w-full max-w-md shadow-2xl relative">
+            <button
+              onClick={() => setShowAuthModal(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-full hover:bg-slate-800 transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="text-center mb-6">
+              <div className="inline-flex p-3 rounded-2xl bg-blue-500/10 border border-blue-500/30 text-blue-400 mb-3">
+                <User className="w-7 h-7" />
+              </div>
+              <h2 className="text-xl font-bold text-white">
+                {authTab === 'login' ? 'Welcome Back!' : 'Create Account'}
+              </h2>
+              <p className="text-xs text-slate-400 mt-1">
+                {authTab === 'login'
+                  ? 'Log in to manage your instant WhatsApp 3-Wheel alert settings.'
+                  : 'Register to receive instant WhatsApp deal notifications directly to your phone.'}
+              </p>
+            </div>
+
+            {/* Auth Tabs */}
+            <div className="flex bg-[#0b0f19] p-1 rounded-xl mb-5 border border-[#232f48]">
+              <button
+                onClick={() => { setAuthTab('login'); setAuthError(''); }}
+                className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all ${
+                  authTab === 'login' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Log In
+              </button>
+              <button
+                onClick={() => { setAuthTab('register'); setAuthError(''); }}
+                className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all ${
+                  authTab === 'register' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Register
+              </button>
+            </div>
+
+            {authError && (
+              <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-3 rounded-xl text-xs mb-4 text-center font-medium">
+                {authError}
+              </div>
+            )}
+
+            <form onSubmit={handleAuthSubmit} className="space-y-4">
+              {authTab === 'register' && (
+                <div>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">Full Name</label>
+                  <div className="relative">
+                    <User className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                    <input
+                      type="text"
+                      required
+                      value={authName}
+                      onChange={(e) => setAuthName(e.target.value)}
+                      placeholder="Your Name"
+                      className="w-full bg-[#0b0f19] border border-[#232f48] rounded-xl pl-9 pr-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1">Email Address</label>
+                <div className="relative">
+                  <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                  <input
+                    type="email"
+                    required
+                    value={authEmail}
+                    onChange={(e) => setAuthEmail(e.target.value)}
+                    placeholder="name@example.com"
+                    className="w-full bg-[#0b0f19] border border-[#232f48] rounded-xl pl-9 pr-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1">Password</label>
+                <div className="relative">
+                  <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                  <input
+                    type="password"
+                    required
+                    value={authPassword}
+                    onChange={(e) => setAuthPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full bg-[#0b0f19] border border-[#232f48] rounded-xl pl-9 pr-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              {authTab === 'register' && (
+                <div>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">
+                    WhatsApp Phone Number (Optional)
+                  </label>
+                  <div className="relative">
+                    <Smartphone className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                    <input
+                      type="text"
+                      value={authPhone}
+                      onChange={(e) => setAuthPhone(e.target.value)}
+                      placeholder="94771234567"
+                      className="w-full bg-[#0b0f19] border border-[#232f48] rounded-xl pl-9 pr-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+                  <p className="text-[10px] text-slate-500 mt-1">Include country code without + (e.g. 94771234567)</p>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={authLoading}
+                className="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-3 rounded-xl text-xs transition-all shadow-lg shadow-blue-500/20 cursor-pointer disabled:opacity-50 mt-2"
+              >
+                {authLoading ? 'Processing...' : authTab === 'login' ? 'Log In' : 'Create Account'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Profile & WhatsApp Settings Modal */}
+      {showProfileModal && currentUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fade-in">
+          <div className="bg-[#131b2e] border border-[#232f48] rounded-3xl p-6 w-full max-w-md shadow-2xl relative">
+            <button
+              onClick={() => setShowProfileModal(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-full hover:bg-slate-800 transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="text-center mb-6">
+              <div className="inline-flex p-3 rounded-2xl bg-blue-500/10 border border-blue-500/30 text-blue-400 mb-3">
+                <Settings className="w-7 h-7" />
+              </div>
+              <h2 className="text-xl font-bold text-white">Profile & Alert Settings</h2>
+              <p className="text-xs text-slate-400 mt-1">
+                Configure your WhatsApp phone number to receive instant 3-Wheel notifications.
+              </p>
+            </div>
+
+            {profileSuccess && (
+              <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 p-3 rounded-xl text-xs mb-4 text-center font-medium">
+                {profileSuccess}
+              </div>
+            )}
+
+            {profileError && (
+              <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-3 rounded-xl text-xs mb-4 text-center font-medium">
+                {profileError}
+              </div>
+            )}
+
+            <form onSubmit={handleUpdateProfile} className="space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1">Full Name</label>
+                <div className="relative">
+                  <User className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                  <input
+                    type="text"
+                    required
+                    value={profileName}
+                    onChange={(e) => setProfileName(e.target.value)}
+                    className="w-full bg-[#0b0f19] border border-[#232f48] rounded-xl pl-9 pr-4 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1">Email Address (Account ID)</label>
+                <div className="relative">
+                  <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+                  <input
+                    type="email"
+                    disabled
+                    value={currentUser.email}
+                    className="w-full bg-[#0b0f19]/50 border border-[#232f48] rounded-xl pl-9 pr-4 py-2.5 text-xs text-slate-500 cursor-not-allowed"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1">
+                  WhatsApp Alert Number
+                </label>
+                <div className="relative">
+                  <Smartphone className="w-4 h-4 text-emerald-400 absolute left-3 top-3" />
+                  <input
+                    type="text"
+                    value={profilePhone}
+                    onChange={(e) => setProfilePhone(e.target.value)}
+                    placeholder="94771234567"
+                    className="w-full bg-[#0b0f19] border border-[#232f48] rounded-xl pl-9 pr-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Format: Country code + Number without + (e.g. <strong className="text-emerald-400">94771234567</strong>)
+                </p>
+              </div>
+
+              <div className="bg-[#0b0f19] border border-[#232f48] rounded-xl p-3.5 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Bell className="w-4 h-4 text-amber-400" />
+                  <div>
+                    <div className="text-xs font-semibold text-white">Instant Deal Alerts</div>
+                    <div className="text-[10px] text-slate-400">Receive WhatsApp alerts when new deals post</div>
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={profileSubscribed}
+                  onChange={(e) => setProfileSubscribed(e.target.checked)}
+                  className="w-4 h-4 accent-blue-600 rounded cursor-pointer"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={profileLoading}
+                className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-3 rounded-xl text-xs transition-all shadow-lg shadow-emerald-500/20 cursor-pointer disabled:opacity-50 mt-2"
+              >
+                {profileLoading ? 'Saving...' : '💾 Save Profile Settings'}
+              </button>
+            </form>
+          </div>
         </div>
       )}
     </div>
