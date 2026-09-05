@@ -1,5 +1,11 @@
 const axios = require('axios');
+const crypto = require('crypto');
 const cloudinary = require('../config/cloudinary');
+
+const getImagePublicId = (url) => {
+  const hash = crypto.createHash('md5').update(url).digest('hex');
+  return `img_${hash}`;
+};
 
 /**
  * Auto-uploads scraped image URLs to Cloudinary Cloud Storage for long-term backup
@@ -17,6 +23,8 @@ const backupImages = async (imageUrls = []) => {
   for (const url of imageUrls) {
     if (!url || typeof url !== 'string') continue;
     try {
+      const publicId = getImagePublicId(url);
+
       // Fetch image buffer with standard Browser User-Agent to bypass hotlink protection
       const response = await axios.get(url, {
         responseType: 'arraybuffer',
@@ -29,9 +37,11 @@ const backupImages = async (imageUrls = []) => {
       const mimeType = response.headers['content-type'] || 'image/jpeg';
       const base64Image = `data:${mimeType};base64,${Buffer.from(response.data).toString('base64')}`;
 
-      // Upload base64 data to Cloudinary
+      // Upload base64 data to Cloudinary using deterministic public_id to prevent duplicates
       const res = await cloudinary.uploader.upload(base64Image, {
         folder: 'three_wheel_deals',
+        public_id: publicId,
+        overwrite: false,
       });
 
       if (res && res.secure_url) {
@@ -41,8 +51,16 @@ const backupImages = async (imageUrls = []) => {
         uploadedUrls.push(url);
       }
     } catch (err) {
-      console.error(`[Cloudinary Upload Notice] ${err.message || 'Upload error'}, using direct link fallback.`);
-      uploadedUrls.push(url);
+      // If image already exists, construct Cloudinary URL or fallback
+      if (err.message && err.message.includes('already exists')) {
+        const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+        const publicId = getImagePublicId(url);
+        const existingUrl = `https://res.cloudinary.com/${cloudName}/image/upload/v1/three_wheel_deals/${publicId}.jpg`;
+        uploadedUrls.push(existingUrl);
+      } else {
+        console.error(`[Cloudinary Upload Notice] ${err.message || 'Upload error'}, using direct link fallback.`);
+        uploadedUrls.push(url);
+      }
     }
   }
 

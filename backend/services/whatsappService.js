@@ -252,6 +252,34 @@ const restartWhatsAppBot = async () => {
 const User = require('../models/User');
 
 /**
+ * Resolves a phone number into a valid WhatsApp JID (e.g., 94771234567@c.us or LID format)
+ * @param {string} phone 
+ * @returns {Promise<string|null>}
+ */
+const resolveTargetJid = async (phone) => {
+  if (!phone) return null;
+  let cleaned = phone.replace(/[^0-9]/g, '');
+  if (!cleaned) return null;
+  if (cleaned.startsWith('0')) {
+    cleaned = '94' + cleaned.slice(1);
+  }
+  if (!cleaned.startsWith('94') && cleaned.length === 9) {
+    cleaned = '94' + cleaned;
+  }
+  const defaultJid = `${cleaned}@c.us`;
+  if (!client || !clientReady) return defaultJid;
+  try {
+    const numberId = await client.getNumberId(cleaned);
+    if (numberId && numberId._serialized) {
+      return numberId._serialized;
+    }
+  } catch (err) {
+    console.log(`[WhatsApp JID Lookup Warning for ${cleaned}] ${err.message}`);
+  }
+  return defaultJid;
+};
+
+/**
  * Retrieves all subscribers whose alert filters match the given listing
  */
 const getSubscribedUsersForListing = async (listing) => {

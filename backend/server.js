@@ -31,6 +31,20 @@ app.post('/api/whatsapp/restart', async (req, res) => {
   res.json({ success: true, message: 'WhatsApp Bot restarting...' });
 });
 
+app.use('/api/whatsapp/test', async (req, res) => {
+  const sampleListing = {
+    title: 'TVS King 2026 (Filter Verification Test)',
+    price: 'Rs 1,850,000',
+    priceNumeric: 1850000,
+    location: 'Colombo',
+    phone: '0716394044',
+    source: 'ikman.lk',
+    sourceUrl: 'https://ikman.lk/test-deal',
+  };
+  const result = await sendWhatsAppAlert(sampleListing);
+  res.json({ success: result, message: 'Test alert sent to matching subscribers.' });
+});
+
 app.post('/api/whatsapp/logout', async (req, res) => {
   logoutWhatsAppBot();
   res.json({ success: true, message: 'WhatsApp Bot logging out...' });
@@ -116,8 +130,11 @@ const runScrapeCycle = async () => {
     let newItemsCount = 0;
 
     for (const ad of allScrapedAds) {
+      const cleanSourceUrl = ad.sourceUrl ? ad.sourceUrl.split('?')[0] : ad.sourceUrl;
+      ad.sourceUrl = cleanSourceUrl;
+
       // Step 1: Check if this exact URL already exists
-      const existingByUrl = await Listing.findOne({ sourceUrl: ad.sourceUrl });
+      const existingByUrl = await Listing.findOne({ sourceUrl: cleanSourceUrl });
       if (existingByUrl) {
         // Check if price dropped!
         if (ad.priceNumeric > 0 && existingByUrl.priceNumeric > 0 && ad.priceNumeric < existingByUrl.priceNumeric) {
@@ -137,21 +154,19 @@ const runScrapeCycle = async () => {
 
           await sendWhatsAppPriceDropAlert(existingByUrl);
         } else {
-          // Same URL - just update timestamp
+          // Same URL - update timestamp quietly
           await Listing.updateOne(
-            { sourceUrl: ad.sourceUrl },
+            { sourceUrl: cleanSourceUrl },
             { $set: { postedTimestamp: ad.postedTimestamp, postedTimeText: ad.postedTimeText, title: ad.title } }
           );
         }
-        continue;
+        continue; // Skip new deal alert & image backup for existing URLs
       }
 
-      // Step 2: Smart duplicate detection - same vehicle, different URL
-      // Check by: (A) Same image URL, OR (B) Same price + location + source
+      // Step 2: Smart duplicate detection - match by Image URL OR Title + Price
       const adImageUrl = (ad.originalImages && ad.originalImages.length > 0) ? ad.originalImages[0] : null;
       let duplicateEntry = null;
 
-      // (A) Match by image URL
       if (adImageUrl && adImageUrl.length > 10) {
         duplicateEntry = await Listing.findOne({
           source: ad.source,
@@ -159,22 +174,35 @@ const runScrapeCycle = async () => {
         });
       }
 
-      // (B) Match by price + location (if image didn't match)
-      if (!duplicateEntry && ad.priceNumeric > 0) {
+      if (!duplicateEntry && ad.title && ad.priceNumeric > 0) {
         duplicateEntry = await Listing.findOne({
           source: ad.source,
+          title: ad.title,
           priceNumeric: ad.priceNumeric,
-          location: ad.location,
         });
       }
 
       if (duplicateEntry) {
-        // Same vehicle reposted with new URL - replace old with newest version
-        console.log(`🔄 [DUPLICATE REPLACED] "${duplicateEntry.title}" → "${ad.title}"`);
-        await Listing.deleteOne({ _id: duplicateEntry._id });
+        // Same vehicle reposted - update quietly without duplicate Cloudinary upload or repeat WhatsApp alert
+        console.log(`🔄 [DUPLICATE REPOST UPDATED] "${duplicateEntry.title}" (${ad.source})`);
+        await Listing.updateOne(
+          { _id: duplicateEntry._id },
+          { $set: { sourceUrl: cleanSourceUrl, postedTimestamp: ad.postedTimestamp, postedTimeText: ad.postedTimeText } }
+        );
+        continue; // Skip WhatsApp alert & duplicate Cloudinary upload
       }
 
-      // Save new listing to database
+      // Step 3: Check age of listing - ONLY process recent ads (posted within last 48 hours)
+      const nowMs = Date.now();
+      const listingMs = ad.postedTimestamp ? new Date(ad.postedTimestamp).getTime() : nowMs;
+      const ageInHours = (nowMs - listingMs) / (1000 * 60 * 60);
+
+      if (ageInHours > 48) {
+        console.log(`ℹ️ [WhatsApp Skip] "${ad.title}" is a promoted/bumped ad originally posted on "${ad.postedTimeText}". Skipping instant alert.`);
+        continue;
+      }
+
+      // Step 4: ONLY Upload to Cloudinary & save BRAND NEW genuine recent deal to database
       const cloudImages = await backupImages(ad.originalImages);
       const newListing = await Listing.create({
         ...ad,
@@ -182,10 +210,9 @@ const runScrapeCycle = async () => {
       });
 
       newItemsCount++;
-      const dealLabel = duplicateEntry ? 'REPOSTED DEAL' : 'NEW DEAL';
-      console.log(`✨ [${dealLabel}] [${ad.source}] ${ad.title} (${ad.price})`);
+      console.log(`✨ [GENUINE NEW DEAL] [${ad.source}] ${ad.title} (${ad.price})`);
 
-      // Extract seller phone number directly from detail page if not present using Puppeteer
+      // Extract seller phone number directly from detail page if missing
       if (!newListing.phone || newListing.phone === 'N/A') {
         const detailPhone = await fetchSellerPhone(newListing.sourceUrl, newListing.source);
         if (detailPhone) {
@@ -195,7 +222,7 @@ const runScrapeCycle = async () => {
         }
       }
 
-      // Trigger instant WhatsApp alert for EVERY deal that posts on the website grid
+      // Trigger instant WhatsApp alert ONLY for genuinely new ads posted within the last 48 hours
       const sent = await sendWhatsAppAlert(newListing);
       if (sent) {
         newListing.notifiedWhatsApp = true;
