@@ -15,9 +15,9 @@ const getListings = async (req, res) => {
 
     if (modelType && modelType !== 'all') {
       if (modelType === '2-stroke') {
-        query.title = { $regex: '2\\s*stroke', $options: 'i' };
+        query.title = { $regex: '2[\\s-]*stroke', $options: 'i' };
       } else if (modelType === '4-stroke') {
-        query.title = { $regex: '4\\s*stroke', $options: 'i' };
+        query.title = { $regex: '4[\\s-]*stroke', $options: 'i' };
       } else if (modelType === 'tvs-king') {
         query.title = { $regex: 'tvs|king', $options: 'i' };
       } else if (modelType === 'piaggio-ape') {
@@ -211,8 +211,8 @@ const cleanupOldListings = async (req, res) => {
 
     const allImages = [];
     oldListings.forEach((item) => {
-      if (item.images && Array.isArray(item.images)) {
-        allImages.push(...item.images);
+      if (item.cloudinaryImages && Array.isArray(item.cloudinaryImages)) {
+        allImages.push(...item.cloudinaryImages);
       }
     });
 

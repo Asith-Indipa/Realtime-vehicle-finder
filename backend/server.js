@@ -54,65 +54,7 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
 });
 
-const puppeteer = require('puppeteer-core');
-const fs = require('fs');
-
-const findChromePath = () => {
-  const commonPaths = [
-    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-    process.env.LOCALAPPDATA + '\\Google\\Chrome\\Application\\chrome.exe',
-  ];
-  for (const p of commonPaths) {
-    if (p && fs.existsSync(p)) return p;
-  }
-  return null;
-};
-
-/**
- * Fetches the seller's contact phone number directly from the detail page URL using Puppeteer (prevents 403 Forbidden)
- */
-const fetchSellerPhone = async (sourceUrl, source) => {
-  let browser = null;
-  try {
-    const chromePath = findChromePath();
-    if (!chromePath) return null;
-
-    browser = await puppeteer.launch({
-      executablePath: chromePath,
-      headless: 'new',
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-    });
-
-    const page = await browser.newPage();
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
-    await page.goto(sourceUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-
-    const phone = await page.evaluate(() => {
-      const telEl = document.querySelector('a[href^="tel:"]');
-      if (telEl) {
-        const href = telEl.getAttribute('href') || '';
-        const cleaned = href.replace('tel:', '').trim();
-        if (cleaned) return cleaned;
-        if (telEl.innerText.trim()) return telEl.innerText.trim();
-      }
-
-      // Check contact boxes or general text
-      const pageText = document.body.innerText;
-      const match = pageText.match(/(?:07[0-8]\d{7}|0[1-9]\d{8})/);
-      return match ? match[0] : null;
-    });
-
-    return phone;
-  } catch (e) {
-    console.log(`[Phone Extractor Note] Detail page check for ${sourceUrl}: ${e.message}`);
-    return null;
-  } finally {
-    if (browser) {
-      await browser.close().catch(() => {});
-    }
-  }
-};
+const { fetchSellerDetails, extractPhoneFromText, findChromePath } = require('./services/detailService');
 
 // Master Scraping & Alert Execution Loop
 const runScrapeCycle = async () => {
@@ -147,19 +89,13 @@ const runScrapeCycle = async () => {
           existingByUrl.priceNumeric = ad.priceNumeric;
           existingByUrl.hasPriceDrop = true;
           existingByUrl.priceDropAmount = dropAmount;
-          existingByUrl.postedTimestamp = ad.postedTimestamp;
-          existingByUrl.postedTimeText = ad.postedTimeText;
           existingByUrl.title = ad.title;
           await existingByUrl.save();
 
           await sendWhatsAppPriceDropAlert(existingByUrl);
-        } else {
-          // Same URL - update timestamp quietly
-          await Listing.updateOne(
-            { sourceUrl: cleanSourceUrl },
-            { $set: { postedTimestamp: ad.postedTimestamp, postedTimeText: ad.postedTimeText, title: ad.title } }
-          );
         }
+        // IMPORTANT: Do NOT update postedTimestamp for existing ads!
+        // Keeping original post timestamp prevents old ads from constantly jumping to the top of the website.
         continue; // Skip new deal alert & image backup for existing URLs
       }
 
@@ -183,12 +119,8 @@ const runScrapeCycle = async () => {
       }
 
       if (duplicateEntry) {
-        // Same vehicle reposted - update quietly without duplicate Cloudinary upload or repeat WhatsApp alert
-        console.log(`🔄 [DUPLICATE REPOST UPDATED] "${duplicateEntry.title}" (${ad.source})`);
-        await Listing.updateOne(
-          { _id: duplicateEntry._id },
-          { $set: { sourceUrl: cleanSourceUrl, postedTimestamp: ad.postedTimestamp, postedTimeText: ad.postedTimeText } }
-        );
+        // Same vehicle reposted - update sourceUrl only if needed, do NOT change original timestamp
+        console.log(`🔄 [DUPLICATE REPOST SKIPPED] "${duplicateEntry.title}" (${ad.source})`);
         continue; // Skip WhatsApp alert & duplicate Cloudinary upload
       }
 
@@ -212,14 +144,24 @@ const runScrapeCycle = async () => {
       newItemsCount++;
       console.log(`✨ [GENUINE NEW DEAL] [${ad.source}] ${ad.title} (${ad.price})`);
 
-      // Extract seller phone number directly from detail page if missing
-      if (!newListing.phone || newListing.phone === 'N/A') {
-        const detailPhone = await fetchSellerPhone(newListing.sourceUrl, newListing.source);
-        if (detailPhone) {
-          newListing.phone = detailPhone;
-          await newListing.save();
-          console.log(`📞 [Seller Phone Extracted] ${detailPhone} for ${newListing.title}`);
-        }
+      // Extract seller phone number and exact location (City, District) directly from detail page
+      const details = await fetchSellerDetails(newListing.sourceUrl, newListing.source);
+      let listingUpdated = false;
+
+      if (details.phone && (!newListing.phone || newListing.phone === 'N/A')) {
+        newListing.phone = details.phone;
+        listingUpdated = true;
+        console.log(`📞 [Seller Phone Extracted] ${details.phone} for ${newListing.title}`);
+      }
+
+      if (details.location && details.location !== 'Sri Lanka' && (!newListing.location || newListing.location === 'Sri Lanka' || !newListing.location.includes(','))) {
+        newListing.location = details.location;
+        listingUpdated = true;
+        console.log(`📍 [Exact Location Extracted] ${details.location} for ${newListing.title}`);
+      }
+
+      if (listingUpdated) {
+        await newListing.save();
       }
 
       // Trigger instant WhatsApp alert ONLY for genuinely new ads posted within the last 48 hours
@@ -231,6 +173,34 @@ const runScrapeCycle = async () => {
     }
 
     console.log(`[Scraper Cycle Finished] Found ${newItemsCount} new 3-Wheel deal(s).\n`);
+
+    // Automatic background enrichment for recent listings with missing contact numbers
+    try {
+      const pendingPhoneAds = await Listing.find({
+        $or: [{ phone: 'N/A' }, { phone: null }, { phone: '' }]
+      })
+        .sort({ postedTimestamp: -1 })
+        .limit(5)
+        .lean();
+
+      if (pendingPhoneAds.length > 0) {
+        console.log(`🔍 [Auto-Enrichment] Checking ${pendingPhoneAds.length} recent ad(s) with missing contact details...`);
+        for (const pad of pendingPhoneAds) {
+          const detail = await fetchSellerDetails(pad.sourceUrl, pad.source);
+          if (detail.phone && detail.phone !== 'N/A') {
+            const updateDoc = { phone: detail.phone };
+            if (detail.location && detail.location.includes(',') && (!pad.location || !pad.location.includes(','))) {
+              updateDoc.location = detail.location;
+            }
+            await Listing.updateOne({ _id: pad._id }, { $set: updateDoc });
+            console.log(`   ✅ [Auto-Enriched] "${pad.title}" (${pad.source}) -> Phone: ${detail.phone}`);
+          }
+          await new Promise((r) => setTimeout(r, 600));
+        }
+      }
+    } catch (enrichErr) {
+      console.log(`[Auto-Enrichment Note] ${enrichErr.message}`);
+    }
   } catch (error) {
     console.error(`[Scraper Cycle Error] ${error.message}`);
   }
@@ -240,22 +210,26 @@ const { cleanupOldListings } = require('./controllers/listingController');
 
 const PORT = process.env.PORT || 5000;
 
-// Connect Database & Launch Server
-connectDB().then(() => {
-  app.listen(PORT, () => {
-    console.log(`🚀 [Server Ready] Running on http://localhost:${PORT}`);
-    
-    // Initial cleanup & scrape 3 seconds after server startup
-    setTimeout(async () => {
-      await cleanupOldListings();
-      await runScrapeCycle();
-    }, 3000);
+// Connect Database & Launch Server if executed directly
+if (require.main === module) {
+  connectDB().then(() => {
+    app.listen(PORT, () => {
+      console.log(`🚀 [Server Ready] Running on http://localhost:${PORT}`);
+      
+      // Initial cleanup & scrape 3 seconds after server startup
+      setTimeout(async () => {
+        await cleanupOldListings();
+        await runScrapeCycle();
+      }, 3000);
 
-    // Schedule automatic scraping & 7-day auto-cleanup cycle every 5 minutes
-    cron.schedule('*/5 * * * *', async () => {
-      await cleanupOldListings();
-      await runScrapeCycle();
+      // Schedule automatic scraping & 7-day auto-cleanup cycle every 5 minutes
+      cron.schedule('*/5 * * * *', async () => {
+        await cleanupOldListings();
+        await runScrapeCycle();
+      });
+      console.log('⏰ [Scheduler] Cron job registered: Running every 5 minutes (Auto-Scrape + 7-Day Cleanup).');
     });
-    console.log('⏰ [Scheduler] Cron job registered: Running every 5 minutes (Auto-Scrape + 7-Day Cleanup).');
   });
-});
+}
+
+module.exports = { app, fetchSellerDetails, extractPhoneFromText, findChromePath, runScrapeCycle };

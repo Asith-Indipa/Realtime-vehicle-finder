@@ -1,6 +1,7 @@
 const puppeteer = require('puppeteer-core');
 const cheerio = require('cheerio');
 const fs = require('fs');
+const { extractRiyasevanaLocation, normalizeLocation } = require('../utils/locationHelper');
 
 const findChromePath = () => {
   const commonPaths = [
@@ -31,10 +32,14 @@ const INVALID_VEHICLES = [
   'benz', 'mercedes', 'ford', 'mitsubishi', 'isuzu', 'mazda', 'kia', 'hyundai', 'perodua',
   'proton', 'mg', 'chery', 'dfsk', 'micro', 'land rover', 'jeep', 'suv', 'sedan', 'hatchback',
   'nissan', 'crew cab', 'double cab', 'single cab', 'cab', 'pickup', 'pick up', 'navara', 'hilux',
-  'l200', 'bongo', 'canter', 'townace', 'liteace', 'hiace', 'carina', 'bluebird', 'vitz', 'celerio'
+  'l200', 'bongo', 'canter', 'townace', 'liteace', 'hiace', 'carina', 'bluebird', 'vitz', 'celerio',
+  // Spare Parts, Tyres, Engines, Accessories (Not complete vehicles)
+  'tyre', 'tire', 'tyres', 'tires', 'hood', 'canopy', 'meter', 'silencer', 'silancer',
+  'carburetor', 'carborator', 'engine', 'spare part', 'spare parts', 'alloy wheel', 'alloy rim',
+  'rims', 'battery', 'clutch', 'gear box', 'bare chassis', 'chassis only', 'seat cover', 'curtain'
 ];
 
-const VALID_THREEWHEEL_REGEX = /\b(bajaj re|re|2\s*stroke|4\s*stroke|tvs\s*king|piaggio\s*ape|ape|three\s*wheel|3\s*wheel|three-wheel|3-wheel|tuk|qute|compact|maxima|chassis|4stroke|2stroke|yf|subish|piaggio|three\s*wheelers)\b/i;
+const VALID_THREEWHEEL_REGEX = /\b(bajaj re|re|2\s*stroke|4\s*stroke|tvs\s*king|piaggio\s*ape|ape|three\s*wheel|3\s*wheel|three-wheel|3-wheel|tuk|qute|compact|maxima|4stroke|2stroke|yf|subish|piaggio|three\s*wheelers)\b/i;
 
 const isStrictThreeWheel = (title, sourceUrl) => {
   const text = `${title} ${sourceUrl}`.toLowerCase();
@@ -142,8 +147,19 @@ const scrapeRiyasevana = async () => {
     const page = await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
     
+    // Abort heavy assets (images, stylesheets, fonts) to make page load 5x faster & lighter
+    await page.setRequestInterception(true);
+    page.on('request', (req) => {
+      const resourceType = req.resourceType();
+      if (['image', 'stylesheet', 'font', 'media'].includes(resourceType)) {
+        req.abort();
+      } else {
+        req.continue();
+      }
+    });
+
     const cacheBustedUrl = `${RIYASEWANA_URL}?_t=${Date.now()}`;
-    await page.goto(cacheBustedUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
+    await page.goto(cacheBustedUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
     const html = await page.content();
     const $ = cheerio.load(html);
@@ -181,11 +197,17 @@ const scrapeRiyasevana = async () => {
         priceText = priceMatch[0];
       }
 
-      let locationText = 'Sri Lanka';
-      const locMatch = fullCardText.match(/(Colombo|Gampaha|Kandy|Kurunegala|Galle|Matara|Kalutara|Negombo|Batticaloa|Jaffna|Ratnapura|Badulla|Nuwara-Eliya|Anuradhapura|Polonnaruwa|Puttalam|Kegalle|Matale|Hambantota|Vavuniya|Trincomalee|Mannar|Mullaitivu|Moneragala)/i);
-      if (locMatch) {
-        locationText = locMatch[0];
+      const metaText = $(element).find('.v-card-meta, [class*="meta"]').text().trim();
+      let locationText = extractRiyasevanaLocation(sourceUrl, metaText);
+
+      if (!locationText || locationText === 'Sri Lanka') {
+        const locMatch = fullCardText.match(/(Colombo|Gampaha|Kandy|Kurunegala|Galle|Matara|Kalutara|Negombo|Batticaloa|Jaffna|Ratnapura|Badulla|Nuwara-Eliya|Anuradhapura|Polonnaruwa|Puttalam|Kegalle|Matale|Hambantota|Vavuniya|Trincomalee|Mannar|Mullaitivu|Moneragala)/i);
+        if (locMatch) {
+          locationText = locMatch[0];
+        }
       }
+
+      locationText = normalizeLocation(locationText || 'Sri Lanka');
 
       let timeText = 'Recently posted';
       const timeMatch = fullCardText.match(/(\d+\s*(?:m|h|d|w|min|hour|hr|day|week)s?\s*ago|Today|Yesterday)/i);

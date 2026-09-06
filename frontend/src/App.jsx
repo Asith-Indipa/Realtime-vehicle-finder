@@ -23,7 +23,8 @@ import {
   Bell,
   ShieldCheck,
   Filter,
-  Tag
+  Tag,
+  Phone
 } from 'lucide-react';
 
 const API_BASE_URL = 'http://localhost:5000/api/listings';
@@ -297,7 +298,7 @@ export default function App() {
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 5000);
+    const interval = setInterval(fetchData, 20000);
     return () => clearInterval(interval);
   }, [search, sourceFilter, maxPrice, timeRange, priceDropOnly, selectedLocation, selectedModel, sortBy]);
 
@@ -689,9 +690,9 @@ export default function App() {
               <>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
                   {paginatedListings.map((item, index) => {
-                    const imageSrc = (item.originalImages && item.originalImages.length > 0)
-                      ? item.originalImages[0]
-                      : null;
+                    const imageSrc = (item.cloudinaryImages && item.cloudinaryImages.length > 0)
+                      ? item.cloudinaryImages[0]
+                      : ((item.originalImages && item.originalImages.length > 0) ? item.originalImages[0] : null);
                     const isNewestTop = currentPage === 1 && index === 0;
 
             return (
@@ -749,6 +750,23 @@ export default function App() {
                       </span>
                     )}
                   </div>
+
+                  {/* Seller Phone Badge if available */}
+                  {item.phone && item.phone !== 'N/A' && (
+                    <div className="flex items-center justify-between bg-[#0b0f19] px-3 py-1.5 rounded-xl border border-[#232f48] text-xs">
+                      <div className="flex items-center gap-1.5 text-emerald-400 font-semibold">
+                        <Phone className="w-3.5 h-3.5" />
+                        <span>{item.phone}</span>
+                      </div>
+                      <a
+                        href={`tel:${item.phone.replace(/[^0-9+]/g, '')}`}
+                        className="text-[11px] bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 font-bold px-2 py-0.5 rounded-lg transition-colors"
+                      >
+                        Call
+                      </a>
+                    </div>
+                  )}
+
                   <div className="flex flex-col gap-1.5 text-xs text-slate-400 border-t border-[#232f48] pt-3 mt-auto">
                     <div className="flex items-center gap-1.5">
                       <MapPin className="w-3.5 h-3.5 text-blue-400" />

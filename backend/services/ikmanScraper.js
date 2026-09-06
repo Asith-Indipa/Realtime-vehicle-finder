@@ -1,5 +1,6 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
+const { normalizeLocation } = require('../utils/locationHelper');
 
 const IKMAN_BASE_URL = 'https://ikman.lk/en/ads/sri-lanka/three-wheelers';
 
@@ -20,10 +21,14 @@ const INVALID_VEHICLES = [
   'benz', 'mercedes', 'ford', 'mitsubishi', 'isuzu', 'mazda', 'kia', 'hyundai', 'perodua',
   'proton', 'mg', 'chery', 'dfsk', 'micro', 'land rover', 'jeep', 'suv', 'sedan', 'hatchback',
   'nissan', 'crew cab', 'double cab', 'single cab', 'cab', 'pickup', 'pick up', 'navara', 'hilux',
-  'l200', 'bongo', 'canter', 'townace', 'liteace', 'hiace', 'carina', 'bluebird', 'vitz', 'celerio'
+  'l200', 'bongo', 'canter', 'townace', 'liteace', 'hiace', 'carina', 'bluebird', 'vitz', 'celerio',
+  // Spare Parts, Tyres, Engines, Accessories (Not complete vehicles)
+  'tyre', 'tire', 'tyres', 'tires', 'hood', 'canopy', 'meter', 'silencer', 'silancer',
+  'carburetor', 'carborator', 'engine', 'spare part', 'spare parts', 'alloy wheel', 'alloy rim',
+  'rims', 'battery', 'clutch', 'gear box', 'bare chassis', 'chassis only', 'seat cover', 'curtain'
 ];
 
-const VALID_THREEWHEEL_REGEX = /\b(bajaj re|re|2\s*stroke|4\s*stroke|tvs\s*king|piaggio\s*ape|ape|three\s*wheel|3\s*wheel|three-wheel|3-wheel|tuk|qute|compact|maxima|chassis|4stroke|2stroke|yf|subish|piaggio|three\s*wheelers)\b/i;
+const VALID_THREEWHEEL_REGEX = /\b(bajaj re|re|2\s*stroke|4\s*stroke|tvs\s*king|piaggio\s*ape|ape|three\s*wheel|3\s*wheel|three-wheel|3-wheel|tuk|qute|compact|maxima|4stroke|2stroke|yf|subish|piaggio|three\s*wheelers)\b/i;
 
 const isStrictThreeWheel = (title, sourceUrl) => {
   const text = `${title} ${sourceUrl}`.toLowerCase();
@@ -153,6 +158,24 @@ const scrapeIkman = async () => {
       rawCards.push({ card, title, sourceUrl });
     });
 
+    // Extract exact ad dates and sublocations from Next.js state if available
+    const nextDataMap = new Map();
+    try {
+      const nextDataEl = $('script#__NEXT_DATA__, #__NEXT_DATA__');
+      const nextDataHtml = nextDataEl.html();
+      if (nextDataHtml) {
+        const json = JSON.parse(nextDataHtml);
+        const ads = json.props?.pageProps?.ads || json.props?.pageProps?.initialData?.ads || [];
+        for (const adItem of ads) {
+          if (adItem.slug) {
+            nextDataMap.set(adItem.slug.toLowerCase().trim(), adItem);
+          }
+        }
+      }
+    } catch (e) {
+      console.log('[NextData Parse Error]', e.message);
+    }
+
     for (const item of rawCards) {
       const { card, title, sourceUrl } = item;
       const fullCardText = card.text();
@@ -163,39 +186,62 @@ const scrapeIkman = async () => {
         priceText = pm ? pm[0] : 'Negotiable';
       }
 
-      let locationText = card.find('[class*="description--"], [class*="location--"]').first().text().trim();
+      // Match ad in Next.js dataset for exact City, District, and Post Date
+      const slugMatch = sourceUrl.match(/\/ad\/([^/?#]+)/);
+      const slug = slugMatch ? slugMatch[1].toLowerCase().trim() : '';
+      const nextAd = slug ? nextDataMap.get(slug) : null;
+
+      // Extract accurate City and District (e.g. "Pathahewaheta, Kandy" or "Ingiriya, Kalutara")
+      let locationText = '';
+      if (nextAd && nextAd.location && nextAd.location.name) {
+        if (nextAd.sublocation && nextAd.sublocation.name) {
+          locationText = `${nextAd.sublocation.name}, ${nextAd.location.name}`;
+        } else {
+          locationText = nextAd.location.name;
+        }
+      }
+
       if (!locationText) {
+        const rawLoc = card.find('[class*="description--"], [class*="location--"]').first().text().trim();
+        if (rawLoc) {
+          locationText = normalizeLocation(rawLoc);
+        }
+      }
+
+      if (!locationText || locationText === 'Sri Lanka') {
         const locMatch = fullCardText.match(/(Colombo|Gampaha|Kandy|Kurunegala|Galle|Matara|Kalutara|Negombo|Jaffna|Ratnapura|Badulla|Nuwara-Eliya|Anuradhapura|Polonnaruwa|Puttalam|Kegalle|Matale|Hambantota|Vavuniya|Trincomalee|Mannar|Mullaitivu|Moneragala)/i);
         locationText = locMatch ? locMatch[0] : 'Sri Lanka';
       }
 
-      let timeText = card.find('[class*="updated-time--"], [class*="date--"]').text().trim();
-      if (!timeText) {
-        const tm = fullCardText.match(/(\d{1,2}\s*(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)(?:\s*\d{1,2}:\d{2}\s*(?:am|pm))?|\d+\s*(?:minute|min|hour|hr|day|week|month)s?\s*(?:ago)?|Just now|Today|Yesterday)/i);
-        timeText = tm ? tm[0] : '';
-      }
+      locationText = normalizeLocation(locationText);
 
-      if (!timeText || timeText.length < 2) {
-        try {
-          const detailRes = await axios.get(sourceUrl, {
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            },
-            timeout: 6000,
-          });
-          const $detail = cheerio.load(detailRes.data);
-          const detailText = $detail('body').text();
-          const dateMatch = detailText.match(/Posted on\s+([0-9]{1,2}\s+[A-Za-z]{3}\s+[0-9]{1,2}:[0-9]{2}\s*(?:am|pm)?)/i);
-          if (dateMatch) {
-            timeText = dateMatch[1];
-          }
-        } catch (err) {
-          timeText = '7 days ago';
+      // Check for exact original post date from __NEXT_DATA__ (bypasses Ikman's deceptive "Just now" member badges)
+      let postedTimestamp = null;
+      let timeText = '';
+
+      if (nextAd && nextAd.adDate) {
+        const exactDate = new Date(nextAd.adDate);
+        if (!isNaN(exactDate.getTime())) {
+          postedTimestamp = exactDate;
+          timeText = exactDate.toISOString();
         }
       }
 
-      if (!timeText) {
-        timeText = '7 days ago';
+      if (!postedTimestamp) {
+        timeText = card.find('[class*="updated-time--"], [class*="date--"], [class*="info--"]').first().text().trim();
+        if (!timeText) {
+          const tm = fullCardText.match(/(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)(?:\s+\d{1,2}:\d{2}\s*(?:am|pm))?|\d+\s*(?:minute|min|hour|hr|day|week|month)s?(?:\s*ago)?|Just now|Today(?:\s*,\s*\d{1,2}:\d{2}\s*(?:am|pm))?|Yesterday(?:\s*,\s*\d{1,2}:\d{2}\s*(?:am|pm))?)/i);
+          timeText = tm ? tm[0] : '';
+        }
+
+        if (!timeText || timeText.length < 2) {
+          timeText = 'Recently posted';
+        }
+
+        postedTimestamp = parsePostedTimestamp(timeText);
+        if (!postedTimestamp || isNaN(postedTimestamp.getTime())) {
+          postedTimestamp = new Date(Date.now() - (rawCards.indexOf(item) + 1) * 60 * 1000);
+        }
       }
 
       const imgNode = card.find('img').first();
@@ -210,10 +256,6 @@ const scrapeIkman = async () => {
       }
 
       const priceNumeric = parseInt(priceText.replace(/[^0-9]/g, ''), 10) || 0;
-      let postedTimestamp = parsePostedTimestamp(timeText);
-      if (!postedTimestamp || isNaN(postedTimestamp.getTime())) {
-        postedTimestamp = new Date(Date.now() - (rawCards.indexOf(item) + 1) * 60 * 1000);
-      }
 
       listings.push({
         title,

@@ -314,9 +314,9 @@ const getSubscribedUsersForListing = async (listing) => {
         let matchesModel = true;
 
         if (modelFilter === '2-stroke') {
-          matchesModel = /2\s*stroke/i.test(listingTitle);
+          matchesModel = /2[\s-]*stroke/i.test(listingTitle);
         } else if (modelFilter === '4-stroke') {
-          matchesModel = /4\s*stroke/i.test(listingTitle);
+          matchesModel = /4[\s-]*stroke/i.test(listingTitle);
         } else if (modelFilter === 'tvs-king') {
           matchesModel = /tvs|king/i.test(listingTitle);
         } else if (modelFilter === 'piaggio-ape') {
@@ -368,9 +368,9 @@ const sendWhatsAppAlert = async (listing) => {
       return false;
     }
 
-    const imageToUse = (listing.originalImages && listing.originalImages.length > 0)
-      ? listing.originalImages[0]
-      : null;
+    const imageToUse = (listing.cloudinaryImages && listing.cloudinaryImages.length > 0)
+      ? listing.cloudinaryImages[0]
+      : ((listing.originalImages && listing.originalImages.length > 0) ? listing.originalImages[0] : null);
 
     const sellerContact = (listing.phone && listing.phone !== 'N/A' && listing.phone.trim() !== '')
       ? listing.phone.trim()
@@ -419,7 +419,7 @@ const sendWhatsAppAlert = async (listing) => {
 };
 
 /**
- * Sends instant WhatsApp alert when a price drop is detected to all active subscribers
+ * Sends instant WhatsApp alert when a price drop is detected to all matching subscribers
  * @param {Object} listing 
  */
 const sendWhatsAppPriceDropAlert = async (listing) => {
@@ -429,12 +429,15 @@ const sendWhatsAppPriceDropAlert = async (listing) => {
   }
 
   try {
-    const phoneNumbers = await getSubscribedPhoneNumbers();
-    if (phoneNumbers.length === 0) return false;
+    const subscribers = await getSubscribedUsersForListing(listing);
+    if (subscribers.length === 0) {
+      console.log(`[WhatsApp Price Drop Note] No matching subscribers for "${listing.title}" in ${listing.location}`);
+      return false;
+    }
 
-    const imageToUse = (listing.originalImages && listing.originalImages.length > 0)
-      ? listing.originalImages[0]
-      : null;
+    const imageToUse = (listing.cloudinaryImages && listing.cloudinaryImages.length > 0)
+      ? listing.cloudinaryImages[0]
+      : ((listing.originalImages && listing.originalImages.length > 0) ? listing.originalImages[0] : null);
 
     const formattedDrop = listing.priceDropAmount ? `Rs. ${listing.priceDropAmount.toLocaleString()}` : '';
 
@@ -454,9 +457,9 @@ const sendWhatsAppPriceDropAlert = async (listing) => {
 🔗 *Direct Link:* ${listing.sourceUrl}`;
 
     let successCount = 0;
-    for (const rawPhone of phoneNumbers) {
+    for (const sub of subscribers) {
       try {
-        const targetJid = await resolveTargetJid(rawPhone);
+        const targetJid = await resolveTargetJid(sub.whatsappNumber);
         if (!targetJid) continue;
 
         if (imageToUse) {
@@ -464,15 +467,16 @@ const sendWhatsAppPriceDropAlert = async (listing) => {
             const media = await MessageMedia.fromUrl(imageToUse);
             await client.sendMessage(targetJid, media, { caption: messageText });
           } catch (mediaErr) {
+            console.log(`[WhatsApp Media Warning for ${targetJid}] ${mediaErr.message}. Sending text alert...`);
             await client.sendMessage(targetJid, messageText);
           }
         } else {
           await client.sendMessage(targetJid, messageText);
         }
         successCount++;
-        console.log(`[WhatsApp Price Drop Delivered] Sent to ${targetJid}`);
+        console.log(`[WhatsApp Price Drop Delivered] Sent to ${targetJid} (${sub.name})`);
       } catch (err) {
-        console.error(`[WhatsApp Price Drop Send Error to ${rawPhone}] ${err.message}`);
+        console.error(`[WhatsApp Price Drop Send Error to ${sub.whatsappNumber}] ${err.message}`);
       }
     }
 
