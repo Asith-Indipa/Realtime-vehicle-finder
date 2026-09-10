@@ -4,8 +4,10 @@ const cors = require('cors');
 const cron = require('node-cron');
 const connectDB = require('./config/db');
 const Listing = require('./models/Listing');
+const FacebookBaseline = require('./models/FacebookBaseline');
 const { scrapeIkman } = require('./services/ikmanScraper');
 const { scrapeRiyasevana } = require('./services/riyasevanaScraper');
+const { scrapeFacebook } = require('./services/facebookScraper');
 const { backupImages } = require('./services/imageService');
 const { sendWhatsAppAlert, sendWhatsAppPriceDropAlert, getWhatsAppStatus, restartWhatsAppBot, logoutWhatsAppBot } = require('./services/whatsappService');
 const listingRoutes = require('./routes/listingRoutes');
@@ -56,24 +58,70 @@ app.get('/health', (req, res) => {
 
 const { fetchSellerDetails, extractPhoneFromText, findChromePath } = require('./services/detailService');
 
+let isFirstScrapeCycle = true;
+
 // Master Scraping & Alert Execution Loop
 const runScrapeCycle = async () => {
+  const isInitialRun = isFirstScrapeCycle;
+  isFirstScrapeCycle = false;
+
   console.log(`\n======================================================`);
-  console.log(`[Scraper Cycle Started] ${new Date().toLocaleTimeString()} - Checking for new 3-Wheelers...`);
+  console.log(`[Scraper Cycle Started] ${new Date().toLocaleTimeString()} - Checking for new 3-Wheelers... (Initial Run: ${isInitialRun})`);
   console.log(`======================================================`);
 
   try {
-    const [ikmanAds, riyasevanaAds] = await Promise.all([
+    const [ikmanAds, riyasevanaAds, facebookAds] = await Promise.all([
       scrapeIkman(),
       scrapeRiyasevana(),
+      scrapeFacebook(),
     ]);
 
-    const allScrapedAds = [...ikmanAds, ...riyasevanaAds];
+    // Baseline Initialization for Facebook Marketplace
+    // On the initial scrape cycle of server boot, ALL current Facebook ads across all 9 provinces
+    // are registered into FacebookBaseline and completely skipped (NOT saved to DB, 0 WhatsApp alerts).
+    if (isInitialRun && facebookAds.length > 0) {
+      const initialFbItems = facebookAds
+        .map(ad => ({ itemId: ad.itemId || (ad.sourceUrl ? (ad.sourceUrl.match(/item\/(\d+)/) || [])[1] : null) }))
+        .filter(d => Boolean(d.itemId));
+
+      if (initialFbItems.length > 0) {
+        await FacebookBaseline.insertMany(initialFbItems, { ordered: false }).catch(() => {});
+        console.log(`ℹ️ [Facebook Baseline] Initialized ALL ${initialFbItems.length} historical Facebook ads in MongoDB.`);
+        console.log(`ℹ️ [Facebook Baseline] Initial run: ALL historical Facebook ads completely ignored (0 WhatsApp alerts).`);
+        console.log(`🔔 [Facebook Live Alert] Armed: ONLY genuine new 3-wheel ads posted from now on will be displayed and alerted!`);
+      }
+    }
+
+    // Deduplicate batch by clean source URL to prevent E11000 duplicate key race conditions
+    const allScrapedAds = [...ikmanAds, ...riyasevanaAds, ...facebookAds];
+    const uniqueBatch = [];
+    const seenBatchUrls = new Set();
+    for (const item of allScrapedAds) {
+      const cUrl = item.sourceUrl ? item.sourceUrl.split('?')[0] : item.sourceUrl;
+      if (!cUrl || seenBatchUrls.has(cUrl)) continue;
+      seenBatchUrls.add(cUrl);
+      item.sourceUrl = cUrl;
+      uniqueBatch.push(item);
+    }
+
     let newItemsCount = 0;
 
-    for (const ad of allScrapedAds) {
-      const cleanSourceUrl = ad.sourceUrl ? ad.sourceUrl.split('?')[0] : ad.sourceUrl;
-      ad.sourceUrl = cleanSourceUrl;
+    for (const ad of uniqueBatch) {
+      // Step 0: If Facebook ad, completely skip if in baseline OR during initial boot cycle
+      if (ad.source === 'facebook.com') {
+        if (isInitialRun) {
+          continue; // 100% guarantee: 0 Facebook ads alerted during initial run!
+        }
+        const fbItemId = ad.itemId || (ad.sourceUrl ? (ad.sourceUrl.match(/item\/(\d+)/) || [])[1] : null);
+        if (fbItemId) {
+          const isHistorical = await FacebookBaseline.findOne({ itemId: fbItemId });
+          if (isHistorical) {
+            continue; // Historical ad. Completely ignored!
+          }
+        }
+      }
+
+      const cleanSourceUrl = ad.sourceUrl;
 
       // Step 1: Check if this exact URL already exists
       const existingByUrl = await Listing.findOne({ sourceUrl: cleanSourceUrl });
@@ -136,10 +184,26 @@ const runScrapeCycle = async () => {
 
       // Step 4: ONLY Upload to Cloudinary & save BRAND NEW genuine recent deal to database
       const cloudImages = await backupImages(ad.originalImages);
-      const newListing = await Listing.create({
-        ...ad,
-        cloudinaryImages: cloudImages,
-      });
+      let newListing;
+      try {
+        newListing = await Listing.create({
+          ...ad,
+          cloudinaryImages: cloudImages,
+        });
+      } catch (createErr) {
+        if (createErr.code === 11000) {
+          continue; // Safely ignore duplicate key collisions
+        }
+        throw createErr;
+      }
+
+      // Record this newly alerted Facebook deal into FacebookBaseline
+      if (ad.source === 'facebook.com') {
+        const fbItemId = ad.itemId || (ad.sourceUrl ? (ad.sourceUrl.match(/item\/(\d+)/) || [])[1] : null);
+        if (fbItemId) {
+          await FacebookBaseline.create({ itemId: fbItemId }).catch(() => {});
+        }
+      }
 
       newItemsCount++;
       console.log(`✨ [GENUINE NEW DEAL] [${ad.source}] ${ad.title} (${ad.price})`);
@@ -208,6 +272,27 @@ const runScrapeCycle = async () => {
 
 const { cleanupOldListings } = require('./controllers/listingController');
 
+// One-time cleanup: migrate previous test Facebook ads to FacebookBaseline and clear them from website feed
+const purgeTestFacebookListings = async () => {
+  try {
+    const existingFbListings = await Listing.find({ source: 'facebook.com' });
+    if (existingFbListings.length > 0) {
+      console.log(`🧹 [Facebook Clean] Found ${existingFbListings.length} previous Facebook ads in database.`);
+      const baselineDocs = existingFbListings
+        .map(l => ({ itemId: (l.sourceUrl ? (l.sourceUrl.match(/item\/(\d+)/) || [])[1] : null) }))
+        .filter(d => Boolean(d.itemId));
+
+      if (baselineDocs.length > 0) {
+        await FacebookBaseline.insertMany(baselineDocs, { ordered: false }).catch(() => {});
+      }
+      await Listing.deleteMany({ source: 'facebook.com' });
+      console.log(`✅ [Facebook Clean] Successfully cleared previous Facebook ads from website feed. Only fresh ads will appear from now on.`);
+    }
+  } catch (err) {
+    console.log(`[Facebook Clean Note] ${err.message}`);
+  }
+};
+
 const PORT = process.env.PORT || 5000;
 
 // Connect Database & Launch Server if executed directly
@@ -219,6 +304,7 @@ if (require.main === module) {
       // Initial cleanup & scrape 3 seconds after server startup
       setTimeout(async () => {
         await cleanupOldListings();
+        await purgeTestFacebookListings();
         await runScrapeCycle();
       }, 3000);
 

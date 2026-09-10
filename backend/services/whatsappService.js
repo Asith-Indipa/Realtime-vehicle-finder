@@ -249,6 +249,54 @@ const restartWhatsAppBot = async () => {
   }
 };
 
+/**
+ * Auto-recovery for detached frames or dropped socket connections.
+ * Recreates the headless browser WITHOUT deleting .wwebjs_auth so the session
+ * reconnects instantly in seconds without requiring QR re-scan!
+ */
+const recoverWhatsAppSession = async () => {
+  if (isRestarting) return;
+  isRestarting = true;
+  console.log('🔄 [WhatsApp Self-Healing] Detached frame or connection lost detected. Auto-reconnecting session...');
+  clientReady = false;
+  whatsappStatus = 'INITIALIZING';
+
+  try {
+    if (client && client.pupBrowser) {
+      await client.pupBrowser.close().catch(() => {});
+    }
+    await client.destroy().catch(() => {});
+  } catch (e) {}
+
+  preFlightCleanup();
+
+  // Create fresh client KEEPING .wwebjs_auth so it logs in instantly without re-scanning QR!
+  client = new Client({
+    authStrategy: new LocalAuth({ dataPath: './.wwebjs_auth' }),
+    puppeteer: createPuppeteerOptions(),
+  });
+  setupClientEvents(client);
+
+  try {
+    await client.initialize();
+    console.log('✅ [WhatsApp Self-Healing] Successfully reconnected session.');
+  } catch (err) {
+    console.error('❌ [WhatsApp Self-Healing Failed]', err.message);
+    whatsappStatus = 'DISCONNECTED';
+  } finally {
+    isRestarting = false;
+  }
+};
+
+const isFrameDetachedError = (err) => {
+  if (!err || !err.message) return false;
+  const msg = err.message.toLowerCase();
+  return msg.includes('detached frame') ||
+         msg.includes('execution context was destroyed') ||
+         msg.includes('session closed') ||
+         msg.includes('protocol error');
+};
+
 const User = require('../models/User');
 
 /**
@@ -275,6 +323,9 @@ const resolveTargetJid = async (phone) => {
     }
   } catch (err) {
     console.log(`[WhatsApp JID Lookup Warning for ${cleaned}] ${err.message}`);
+    if (isFrameDetachedError(err)) {
+      recoverWhatsAppSession();
+    }
   }
   return defaultJid;
 };
@@ -374,7 +425,7 @@ const sendWhatsAppAlert = async (listing) => {
 
     const sellerContact = (listing.phone && listing.phone !== 'N/A' && listing.phone.trim() !== '')
       ? listing.phone.trim()
-      : 'Available on Direct Link';
+      : (listing.source === 'facebook.com' ? '💬 Chat on Facebook (See Direct Link)' : 'Available on Direct Link');
 
     const messageText = `🚨 *NEW THREE-WHEEL DEAL DETECTED!* 🛺
 
@@ -407,6 +458,9 @@ const sendWhatsAppAlert = async (listing) => {
         console.log(`[WhatsApp Alert Delivered] Sent to ${targetJid} (${sub.name})`);
       } catch (err) {
         console.error(`[WhatsApp Send Error to ${sub.whatsappNumber}] ${err.message}`);
+        if (isFrameDetachedError(err)) {
+          recoverWhatsAppSession();
+        }
       }
     }
 
@@ -443,7 +497,7 @@ const sendWhatsAppPriceDropAlert = async (listing) => {
 
     const sellerContact = (listing.phone && listing.phone !== 'N/A' && listing.phone.trim() !== '')
       ? listing.phone.trim()
-      : 'Available on Direct Link';
+      : (listing.source === 'facebook.com' ? '💬 Chat on Facebook (See Direct Link)' : 'Available on Direct Link');
 
     const messageText = `📉 *PRICE DROP ALERT!* 🔥 🛺
 
@@ -476,7 +530,10 @@ const sendWhatsAppPriceDropAlert = async (listing) => {
         successCount++;
         console.log(`[WhatsApp Price Drop Delivered] Sent to ${targetJid} (${sub.name})`);
       } catch (err) {
-        console.error(`[WhatsApp Price Drop Send Error to ${sub.whatsappNumber}] ${err.message}`);
+        console.error(`[WhatsApp Price Drop Error to ${sub.whatsappNumber}] ${err.message}`);
+        if (isFrameDetachedError(err)) {
+          recoverWhatsAppSession();
+        }
       }
     }
 

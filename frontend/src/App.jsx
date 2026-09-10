@@ -59,7 +59,7 @@ const getRelativeTime = (timestamp) => {
 
 export default function App() {
   const [listings, setListings] = useState([]);
-  const [stats, setStats] = useState({ totalListings: 0, ikmanCount: 0, riyasevanaCount: 0, todayCount: 0, priceDropCount: 0 });
+  const [stats, setStats] = useState({ totalListings: 0, ikmanCount: 0, riyasevanaCount: 0, facebookCount: 0, todayCount: 0, priceDropCount: 0 });
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [sourceFilter, setSourceFilter] = useState('');
@@ -499,7 +499,7 @@ export default function App() {
       </header>
 
       {/* Stats Bar */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
         <div className="bg-[#151c2c] border border-[#232f48] p-4 rounded-2xl flex flex-col">
           <span className="text-2xl font-bold text-white">{stats.todayCount}</span>
           <span className="text-xs text-slate-400">Deals Today (අද)</span>
@@ -519,6 +519,10 @@ export default function App() {
         <div className="bg-[#151c2c] border border-[#232f48] p-4 rounded-2xl flex flex-col">
           <span className="text-2xl font-bold text-white">{stats.riyasevanaCount}</span>
           <span className="text-xs text-slate-400">riyasevana Ads</span>
+        </div>
+        <div className="bg-[#151c2c] border border-blue-600/30 bg-blue-950/20 p-4 rounded-2xl flex flex-col">
+          <span className="text-2xl font-bold text-blue-400">{stats.facebookCount || 0}</span>
+          <span className="text-xs text-blue-300 font-medium">Facebook Ads</span>
         </div>
       </div>
 
@@ -628,6 +632,7 @@ export default function App() {
           <option value="">All Sources</option>
           <option value="ikman.lk">ikman.lk</option>
           <option value="riyasevana.com">riyasevana.com</option>
+          <option value="facebook.com">facebook.com (Marketplace)</option>
         </select>
 
         <select
@@ -727,9 +732,11 @@ export default function App() {
                     </div>
                   )}
                   <span className={`absolute top-3 right-3 backdrop-blur-md px-2.5 py-1 rounded-md text-xs font-semibold border ${
-                    item.source === 'ikman.lk' 
-                      ? 'bg-sky-950/80 text-sky-400 border-sky-600/40' 
-                      : 'bg-rose-950/80 text-rose-400 border-rose-600/40'
+                    item.source === 'facebook.com'
+                      ? 'bg-blue-950/90 text-blue-400 border-blue-500/50 shadow-sm shadow-blue-500/20'
+                      : item.source === 'ikman.lk' 
+                        ? 'bg-sky-950/80 text-sky-400 border-sky-600/40' 
+                        : 'bg-rose-950/80 text-rose-400 border-rose-600/40'
                   }`}>
                     {item.source}
                   </span>
@@ -752,7 +759,7 @@ export default function App() {
                   </div>
 
                   {/* Seller Phone Badge if available */}
-                  {item.phone && item.phone !== 'N/A' && (
+                  {item.phone && item.phone !== 'N/A' ? (
                     <div className="flex items-center justify-between bg-[#0b0f19] px-3 py-1.5 rounded-xl border border-[#232f48] text-xs">
                       <div className="flex items-center gap-1.5 text-emerald-400 font-semibold">
                         <Phone className="w-3.5 h-3.5" />
@@ -763,6 +770,21 @@ export default function App() {
                         className="text-[11px] bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 font-bold px-2 py-0.5 rounded-lg transition-colors"
                       >
                         Call
+                      </a>
+                    </div>
+                  ) : item.source === 'facebook.com' && (
+                    <div className="flex items-center justify-between bg-blue-950/30 px-3 py-1.5 rounded-xl border border-blue-500/30 text-xs">
+                      <div className="flex items-center gap-1.5 text-blue-400 font-semibold">
+                        <MessageSquare className="w-3.5 h-3.5" />
+                        <span>Chat on Facebook</span>
+                      </div>
+                      <a
+                        href={item.sourceUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-[11px] bg-blue-600/30 hover:bg-blue-600/50 text-blue-300 font-bold px-2 py-0.5 rounded-lg transition-colors"
+                      >
+                        Chat
                       </a>
                     </div>
                   )}
@@ -790,7 +812,7 @@ export default function App() {
                       className="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
                     >
                       <ExternalLink className="w-4 h-4" />
-                      <span>View Ad</span>
+                      <span>{item.source === 'facebook.com' ? 'View on FB' : 'View Ad'}</span>
                     </a>
                     <a
                       href={`https://wa.me/?text=${encodeURIComponent(`Check out this 3-Wheel deal: ${item.title} - ${item.price}\n${item.sourceUrl}`)}`}

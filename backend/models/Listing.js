@@ -8,7 +8,7 @@ const listingSchema = new mongoose.Schema(
     location: { type: String, default: 'Sri Lanka' },
     year: { type: String, default: 'N/A' },
     phone: { type: String, default: 'N/A' },
-    source: { type: String, required: true, enum: ['ikman.lk', 'riyasevana.com'] },
+    source: { type: String, required: true, enum: ['ikman.lk', 'riyasevana.com', 'facebook.com'] },
     sourceUrl: { type: String, required: true, unique: true },
     originalImages: [{ type: String }],
     cloudinaryImages: [{ type: String }],

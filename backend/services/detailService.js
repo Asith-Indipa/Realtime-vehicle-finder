@@ -58,6 +58,11 @@ const extractPhoneFromText = (text) => {
 const fetchSellerDetails = async (sourceUrl, source, existingBrowser = null) => {
   if (!sourceUrl) return { phone: null, location: null };
 
+  // Facebook Marketplace listings handle communication via Messenger or card text
+  if (source === 'facebook.com' || sourceUrl.includes('facebook.com')) {
+    return { phone: null, location: null };
+  }
+
   let extractedPhone = null;
   let extractedLocation = null;
 

@@ -178,6 +178,7 @@ const getStats = async (req, res) => {
     const totalListings = await Listing.countDocuments();
     const ikmanCount = await Listing.countDocuments({ source: 'ikman.lk' });
     const riyasevanaCount = await Listing.countDocuments({ source: 'riyasevana.com' });
+    const facebookCount = await Listing.countDocuments({ source: 'facebook.com' });
     const priceDropCount = await Listing.countDocuments({ hasPriceDrop: true });
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
@@ -188,7 +189,7 @@ const getStats = async (req, res) => {
 
     res.json({
       success: true,
-      stats: { totalListings, ikmanCount, riyasevanaCount, todayCount, priceDropCount },
+      stats: { totalListings, ikmanCount, riyasevanaCount, facebookCount, todayCount, priceDropCount },
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
