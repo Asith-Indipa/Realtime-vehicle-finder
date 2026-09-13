@@ -301,17 +301,19 @@ if (require.main === module) {
     app.listen(PORT, () => {
       console.log(`🚀 [Server Ready] Running on http://localhost:${PORT}`);
       
-      // Initial cleanup & scrape 3 seconds after server startup
+      // Initial scrape 3 seconds after server startup (scraping runs FIRST, cleanup runs in background after)
       setTimeout(async () => {
-        await cleanupOldListings();
         await purgeTestFacebookListings();
         await runScrapeCycle();
+        // Fire-and-forget: cleanup runs in background AFTER scraping, never blocks next cycle
+        cleanupOldListings().catch(e => console.log(`[Background Cleanup Note] ${e.message}`));
       }, 3000);
 
       // Schedule automatic scraping & 7-day auto-cleanup cycle every 5 minutes
       cron.schedule('*/5 * * * *', async () => {
-        await cleanupOldListings();
         await runScrapeCycle();
+        // Fire-and-forget: cleanup runs in background after scraping completes
+        cleanupOldListings().catch(e => console.log(`[Background Cleanup Note] ${e.message}`));
       });
       console.log('⏰ [Scheduler] Cron job registered: Running every 5 minutes (Auto-Scrape + 7-Day Cleanup).');
     });
