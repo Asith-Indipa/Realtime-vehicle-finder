@@ -66,59 +66,61 @@ const fetchSellerDetails = async (sourceUrl, source, existingBrowser = null) => 
   let extractedPhone = null;
   let extractedLocation = null;
 
-  // Fast Path: Axios Cheerio check (instant for static HTML & SSR markup)
-  try {
-    const res = await axios.get(sourceUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-      },
-      timeout: 7000,
-    });
-    const $ = cheerio.load(res.data);
+  // Fast Path: Axios Cheerio check (instant for static HTML & SSR markup, skipped for Riyasewana due to Cloudflare 403)
+  if (!sourceUrl.includes('riyasevana.com')) {
+    try {
+      const res = await axios.get(sourceUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        },
+        timeout: 7000,
+      });
+      const $ = cheerio.load(res.data);
 
-    // Extract exact location
-    if (source === 'ikman.lk' || sourceUrl.includes('ikman.lk')) {
-      const subText = $('[class*="subtitle--"], [class*="sub-title--"]').first().text().trim();
-      const loc = extractIkmanLocation(subText);
-      if (loc) extractedLocation = loc;
-    } else {
-      const loc = extractRiyasevanaLocation(sourceUrl, $('body').text());
-      if (loc) extractedLocation = loc;
-    }
-
-    // Extract phone from tel link or dedicated contact element
-    const telLink = $('a[href^="tel:"]').first().attr('href');
-    if (telLink) {
-      const p = extractPhoneFromText(telLink);
-      if (p) extractedPhone = p;
-    }
-
-    if (!extractedPhone) {
-      const phEl = $('.ph-num, [class*="phone-number"], [class*="call-btn"]').text();
-      if (phEl) {
-        extractedPhone = extractPhoneFromText(phEl);
+      // Extract exact location
+      if (source === 'ikman.lk' || sourceUrl.includes('ikman.lk')) {
+        const subText = $('[class*="subtitle--"], [class*="sub-title--"]').first().text().trim();
+        const loc = extractIkmanLocation(subText);
+        if (loc) extractedLocation = loc;
+      } else {
+        const loc = extractRiyasevanaLocation(sourceUrl, $('body').text());
+        if (loc) extractedLocation = loc;
       }
-    }
 
-    if (!extractedPhone) {
-      extractedPhone = extractPhoneFromText($('body').text());
-    }
-
-    // Check __NEXT_DATA__ JSON on Ikman
-    if (!extractedPhone) {
-      const nextDataEl = $('#__NEXT_DATA__').html();
-      if (nextDataEl) {
-        try {
-          const nextJson = JSON.parse(nextDataEl);
-          const adData = nextJson.props?.pageProps?.initialData?.ad || nextJson.props?.pageProps?.ad;
-          if (adData && adData.contactDetail) {
-            extractedPhone = extractPhoneFromText(JSON.stringify(adData.contactDetail));
-          }
-        } catch (_) {}
+      // Extract phone from tel link or dedicated contact element
+      const telLink = $('a[href^="tel:"]').first().attr('href');
+      if (telLink) {
+        const p = extractPhoneFromText(telLink);
+        if (p) extractedPhone = p;
       }
+
+      if (!extractedPhone) {
+        const phEl = $('.ph-num, [class*="phone-number"], [class*="call-btn"]').text();
+        if (phEl && !phEl.includes('Show Phone')) {
+          extractedPhone = extractPhoneFromText(phEl);
+        }
+      }
+
+      if (!extractedPhone) {
+        extractedPhone = extractPhoneFromText($('body').text());
+      }
+
+      // Check __NEXT_DATA__ JSON on Ikman
+      if (!extractedPhone) {
+        const nextDataEl = $('#__NEXT_DATA__').html();
+        if (nextDataEl) {
+          try {
+            const nextJson = JSON.parse(nextDataEl);
+            const adData = nextJson.props?.pageProps?.initialData?.ad || nextJson.props?.pageProps?.ad;
+            if (adData && adData.contactDetail) {
+              extractedPhone = extractPhoneFromText(JSON.stringify(adData.contactDetail));
+            }
+          } catch (_) {}
+        }
+      }
+    } catch (err) {
+      // Fall through to browser if blocked or needs dynamic rendering
     }
-  } catch (err) {
-    // Fall through to browser if blocked or needs dynamic rendering
   }
 
   // If phone is unmasked and location is found, return immediately without browser overhead
@@ -179,6 +181,23 @@ const fetchSellerDetails = async (sourceUrl, source, existingBrowser = null) => 
       } catch (_) {}
     }
 
+    // On Riyasewana, click the call button and wait for dynamic phone decryption
+    if (source === 'riyasevana.com' || sourceUrl.includes('riyasevana.com')) {
+      try {
+        await page.evaluate(() => {
+          const btn = document.querySelector('.call-btn, .ph-call, a[href^="tel:"]');
+          if (btn) btn.click();
+        });
+        await page.waitForFunction(
+          () => {
+            const el = document.querySelector('.ph-num, a[href^="tel:"]');
+            return el && !el.innerText.includes('Show Phone') && !el.innerText.includes('Contact');
+          },
+          { timeout: 1800 }
+        ).catch(() => {});
+      } catch (_) {}
+    }
+
     const evalData = await page.evaluate(() => {
       // 1. Direct tel link
       let rawPhone = null;
@@ -192,9 +211,11 @@ const fetchSellerDetails = async (sourceUrl, source, existingBrowser = null) => 
       }
 
       // 2. Dedicated phone container (e.g. .ph-num on Riyasewana)
-      if (!rawPhone) {
+      if (!rawPhone || rawPhone.includes('Show Phone')) {
         const phEl = document.querySelector('.ph-num, [class*="phone-number"], [class*="call-btn"]');
-        if (phEl) rawPhone = phEl.innerText.trim();
+        if (phEl && !phEl.innerText.includes('Show Phone')) {
+          rawPhone = phEl.innerText.trim();
+        }
       }
 
       // 3. Subtitle location
