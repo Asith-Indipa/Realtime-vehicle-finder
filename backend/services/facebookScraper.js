@@ -41,10 +41,13 @@ const REGIONAL_HUBS = [
   { name: 'Sabaragamuwa (Ratnapura / Kegalle)', slug: 'ratnapura' },
 ];
 
+// Expanded search queries to capture all 3-wheeler titles (numeric, word, model specific)
+const SEARCH_QUERIES = ['three wheel', '3 wheel', 'bajaj re'];
+
 // ── Tunables ────────────────────────────────────────────────────────────────
 const HUB_TIMEOUT_MS = 45000;      // per-attempt navigation timeout (was 20000)
 const MAX_RETRIES = 2;             // extra attempts after the first (3 tries total)
-const HUB_CONCURRENCY = 3;         // parallel pages; keep modest to avoid FB rate-limiting
+const HUB_CONCURRENCY = 4;         // parallel pages; fast and lightweight
 const CARD_WAIT_TIMEOUT_MS = 8000; // adaptive wait for ad cards to hydrate
 const BLOCKED_RESOURCE_TYPES = new Set(['image', 'media', 'font', 'stylesheet']);
 
@@ -91,7 +94,7 @@ async function blockHeavyAssets(page) {
  * Scrapes a single regional hub with retry + backoff. Never throws —
  * returns [] if every attempt fails, so one bad hub can't kill the cycle.
  */
-async function scrapeHub(browser, hub) {
+async function scrapeHub(browser, hub, query = 'three wheel') {
   let lastError = null;
 
   for (let attempt = 1; attempt <= MAX_RETRIES + 1; attempt++) {
@@ -105,7 +108,7 @@ async function scrapeHub(browser, hub) {
       await blockHeavyAssets(page);
 
       const cacheBuster = Date.now();
-      const requestUrl = `https://www.facebook.com/marketplace/${hub.slug}/search/?query=three%20wheel&sortBy=creation_time_descend&_t=${cacheBuster}`;
+      const requestUrl = `https://www.facebook.com/marketplace/${hub.slug}/search/?query=${encodeURIComponent(query)}&sortBy=creation_time_descend&_t=${cacheBuster}`;
 
       await page.goto(requestUrl, { waitUntil: 'domcontentloaded', timeout: HUB_TIMEOUT_MS });
 
@@ -155,19 +158,19 @@ async function scrapeHub(browser, hub) {
       });
 
       await page.close().catch(() => {});
-      console.log(`[FB Hub OK] ${hub.name} -> ${hubItems.length} raw item(s) (attempt ${attempt}/${MAX_RETRIES + 1})`);
+      console.log(`[FB Hub OK] ${hub.name} ("${query}") -> ${hubItems.length} raw item(s)`);
       return hubItems;
     } catch (err) {
       lastError = err;
       if (page) await page.close().catch(() => {});
-      console.warn(`[FB Hub Retry] ${hub.name} attempt ${attempt}/${MAX_RETRIES + 1} failed: ${err.message}`);
+      console.warn(`[FB Hub Retry] ${hub.name} ("${query}") attempt ${attempt}/${MAX_RETRIES + 1} failed: ${err.message}`);
       if (attempt <= MAX_RETRIES) {
         await new Promise((resolve) => setTimeout(resolve, 1200 * attempt)); // linear backoff
       }
     }
   }
 
-  console.warn(`[Facebook Scraper Hub Notice] Hub ${hub.name} skipped after ${MAX_RETRIES + 1} attempts: ${lastError ? lastError.message : 'unknown error'}`);
+  console.warn(`[Facebook Scraper Hub Notice] Hub ${hub.name} ("${query}") skipped after ${MAX_RETRIES + 1} attempts: ${lastError ? lastError.message : 'unknown error'}`);
   return [];
 }
 
@@ -198,15 +201,23 @@ const scrapeFacebook = async () => {
       ],
     });
 
-    // Scrape all 9 hubs with bounded concurrency so one slow/failed hub
-    // can't cascade into the next hub's time budget.
-    const perHubResults = await runWithConcurrency(REGIONAL_HUBS, HUB_CONCURRENCY, (hub) =>
-      scrapeHub(browser, hub)
+    // Generate tasks for all 9 regional hubs across all search queries
+    const scrapeTasks = [];
+    for (const hub of REGIONAL_HUBS) {
+      for (const query of SEARCH_QUERIES) {
+        scrapeTasks.push({ hub, query });
+      }
+    }
+
+    // Scrape with bounded concurrency
+    const perTaskResults = await runWithConcurrency(scrapeTasks, HUB_CONCURRENCY, (task) =>
+      scrapeHub(browser, task.hub, task.query)
     );
 
     const allRawItems = [];
     const seenItemIds = new Set();
-    for (const hubItems of perHubResults) {
+    for (const hubItems of perTaskResults) {
+      if (!hubItems) continue;
       for (const item of hubItems) {
         if (!seenItemIds.has(item.itemId)) {
           seenItemIds.add(item.itemId);
@@ -217,6 +228,9 @@ const scrapeFacebook = async () => {
 
     const listings = [];
     const seenUrls = new Set();
+    // Track unique ads by content fingerprint (price + location + image) to prevent
+    // the same vehicle posted multiple times under different URLs from appearing as duplicates
+    const seenContentFingerprints = new Set();
 
     for (let index = 0; index < allRawItems.length; index++) {
       const item = allRawItems[index];
@@ -321,6 +335,17 @@ const scrapeFacebook = async () => {
         priceDropAmount = previousPriceNumeric - priceNumeric;
       }
 
+      // ─────────────────────────────────────────────────────────
+      // 3. DUPLICATE DETECTION: Same vehicle posted under multiple URLs
+      //    Fingerprint = price + location + image URL path (without CDN query params)
+      // ─────────────────────────────────────────────────────────
+      const imgFingerprint = item.imgUrl ? item.imgUrl.split('?')[0].split('/').pop() : '';
+      const contentFingerprint = `${priceNumeric}|${locationText.toLowerCase()}|${imgFingerprint}`;
+      if (seenContentFingerprints.has(contentFingerprint)) {
+        continue; // Same vehicle already captured with a different URL
+      }
+      seenContentFingerprints.add(contentFingerprint);
+
       seenUrls.add(item.url);
 
       let normalizedLocation = normalizeLocation(locationText || 'Sri Lanka');
@@ -338,7 +363,7 @@ const scrapeFacebook = async () => {
       const yearMatch = `${title} ${item.fullText}`.match(/\b(199\d|20[0-2]\d)\b/);
       const year = yearMatch ? yearMatch[1] : 'N/A';
 
-      const postedTimestamp = new Date(Date.now() - index * 3 * 60 * 1000);
+      const postedTimestamp = new Date();
 
       listings.push({
         title,
@@ -361,7 +386,8 @@ const scrapeFacebook = async () => {
       });
     }
 
-    console.log(`[Scraper - facebook.com] Scraped ${listings.length} Guaranteed Island-Wide 3-Wheel ads.`);
+    const duplicatesFiltered = allRawItems.length - seenItemIds.size;
+    console.log(`[Scraper - facebook.com] Scraped ${listings.length} Guaranteed Island-Wide 3-Wheel ads.${seenContentFingerprints.size < listings.length + 5 ? '' : ` (${allRawItems.length - listings.length} duplicates filtered)`}`);
     return listings;
   } catch (error) {
     console.error(`[Scraper Error - facebook.com] ${error.message}`);

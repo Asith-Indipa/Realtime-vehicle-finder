@@ -85,7 +85,7 @@ const runScrapeCycle = async () => {
         .filter(d => Boolean(d.itemId));
 
       if (initialFbItems.length > 0) {
-        await FacebookBaseline.insertMany(initialFbItems, { ordered: false }).catch(() => {});
+        await FacebookBaseline.insertMany(initialFbItems, { ordered: false }).catch(() => { });
         console.log(`ℹ️ [Facebook Baseline] Initialized ALL ${initialFbItems.length} historical Facebook ads in MongoDB.`);
         console.log(`ℹ️ [Facebook Baseline] Initial run: ALL historical Facebook ads completely ignored (0 WhatsApp alerts).`);
         console.log(`🔔 [Facebook Live Alert] Armed: ONLY genuine new 3-wheel ads posted from now on will be displayed and alerted!`);
@@ -201,7 +201,7 @@ const runScrapeCycle = async () => {
       if (ad.source === 'facebook.com') {
         const fbItemId = ad.itemId || (ad.sourceUrl ? (ad.sourceUrl.match(/item\/(\d+)/) || [])[1] : null);
         if (fbItemId) {
-          await FacebookBaseline.create({ itemId: fbItemId }).catch(() => {});
+          await FacebookBaseline.create({ itemId: fbItemId }).catch(() => { });
         }
       }
 
@@ -272,27 +272,6 @@ const runScrapeCycle = async () => {
 
 const { cleanupOldListings } = require('./controllers/listingController');
 
-// One-time cleanup: migrate previous test Facebook ads to FacebookBaseline and clear them from website feed
-const purgeTestFacebookListings = async () => {
-  try {
-    const existingFbListings = await Listing.find({ source: 'facebook.com' });
-    if (existingFbListings.length > 0) {
-      console.log(`🧹 [Facebook Clean] Found ${existingFbListings.length} previous Facebook ads in database.`);
-      const baselineDocs = existingFbListings
-        .map(l => ({ itemId: (l.sourceUrl ? (l.sourceUrl.match(/item\/(\d+)/) || [])[1] : null) }))
-        .filter(d => Boolean(d.itemId));
-
-      if (baselineDocs.length > 0) {
-        await FacebookBaseline.insertMany(baselineDocs, { ordered: false }).catch(() => {});
-      }
-      await Listing.deleteMany({ source: 'facebook.com' });
-      console.log(`✅ [Facebook Clean] Successfully cleared previous Facebook ads from website feed. Only fresh ads will appear from now on.`);
-    }
-  } catch (err) {
-    console.log(`[Facebook Clean Note] ${err.message}`);
-  }
-};
-
 const PORT = process.env.PORT || 5000;
 
 // Connect Database & Launch Server if executed directly
@@ -300,10 +279,9 @@ if (require.main === module) {
   connectDB().then(() => {
     app.listen(PORT, () => {
       console.log(`🚀 [Server Ready] Running on http://localhost:${PORT}`);
-      
+
       // Initial scrape 3 seconds after server startup (scraping runs FIRST, cleanup runs in background after)
       setTimeout(async () => {
-        await purgeTestFacebookListings();
         await runScrapeCycle();
         // Fire-and-forget: cleanup runs in background AFTER scraping, never blocks next cycle
         cleanupOldListings().catch(e => console.log(`[Background Cleanup Note] ${e.message}`));
