@@ -1,5 +1,4 @@
 const puppeteer = require('puppeteer-core');
-const fs = require('fs');
 const { normalizeLocation } = require('../utils/locationHelper');
 const { extractPhoneFromText, findChromePath } = require('./detailService');
 
@@ -42,6 +41,136 @@ const REGIONAL_HUBS = [
   { name: 'Sabaragamuwa (Ratnapura / Kegalle)', slug: 'ratnapura' },
 ];
 
+// ── Tunables ────────────────────────────────────────────────────────────────
+const HUB_TIMEOUT_MS = 45000;      // per-attempt navigation timeout (was 20000)
+const MAX_RETRIES = 2;             // extra attempts after the first (3 tries total)
+const HUB_CONCURRENCY = 3;         // parallel pages; keep modest to avoid FB rate-limiting
+const CARD_WAIT_TIMEOUT_MS = 8000; // adaptive wait for ad cards to hydrate
+const BLOCKED_RESOURCE_TYPES = new Set(['image', 'media', 'font', 'stylesheet']);
+
+/**
+ * Runs `worker(item)` over `items` with at most `limit` running concurrently.
+ * Plain implementation, no extra dependency needed.
+ */
+async function runWithConcurrency(items, limit, worker) {
+  const results = new Array(items.length);
+  let cursor = 0;
+
+  async function lane() {
+    while (cursor < items.length) {
+      const current = cursor++;
+      results[current] = await worker(items[current], current);
+    }
+  }
+
+  const lanes = Array.from({ length: Math.min(limit, items.length) }, lane);
+  await Promise.all(lanes);
+  return results;
+}
+
+/**
+ * Blocks heavy assets (images/fonts/css/media) on a page while leaving
+ * document/script/xhr/fetch untouched — Marketplace's card grid is populated
+ * via GraphQL/XHR after the initial shell, so those must stay allowed.
+ * NOTE: blocking the image *request* does not remove the `src` attribute
+ * already present in the DOM — we only ever read that attribute string,
+ * never the decoded pixels, so captured image URLs are unaffected.
+ */
+async function blockHeavyAssets(page) {
+  await page.setRequestInterception(true);
+  page.on('request', (req) => {
+    if (BLOCKED_RESOURCE_TYPES.has(req.resourceType())) {
+      req.abort().catch(() => {});
+    } else {
+      req.continue().catch(() => {});
+    }
+  });
+}
+
+/**
+ * Scrapes a single regional hub with retry + backoff. Never throws —
+ * returns [] if every attempt fails, so one bad hub can't kill the cycle.
+ */
+async function scrapeHub(browser, hub) {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= MAX_RETRIES + 1; attempt++) {
+    let page = null;
+    try {
+      page = await browser.newPage();
+      await page.setUserAgent(
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+      );
+      await page.setViewport({ width: 1920, height: 1080 });
+      await blockHeavyAssets(page);
+
+      const cacheBuster = Date.now();
+      const requestUrl = `https://www.facebook.com/marketplace/${hub.slug}/search/?query=three%20wheel&sortBy=creation_time_descend&_t=${cacheBuster}`;
+
+      await page.goto(requestUrl, { waitUntil: 'domcontentloaded', timeout: HUB_TIMEOUT_MS });
+
+      // Dismiss any Facebook login or cookie overlay modal
+      try {
+        await page.keyboard.press('Escape');
+        const closeBtn = await page.$('div[aria-label="Close"], [aria-label="close"], div[role="button"][tabindex="0"]');
+        if (closeBtn) await closeBtn.click().catch(() => {});
+      } catch (_) {}
+
+      // Adaptive wait: proceed as soon as cards exist instead of a blind fixed sleep
+      try {
+        await page.waitForSelector('a[href*="/marketplace/item/"]', { timeout: CARD_WAIT_TIMEOUT_MS });
+      } catch (_) {
+        // Genuinely could be an empty hub — fall through and let evaluate() return []
+      }
+      await new Promise((resolve) => setTimeout(resolve, 800)); // small settle buffer
+
+      const hubItems = await page.evaluate(() => {
+        const results = [];
+        const links = Array.from(document.querySelectorAll('a[href*="/marketplace/item/"]'));
+
+        for (const a of links) {
+          const href = a.getAttribute('href') || '';
+          const match = href.match(/\/marketplace\/item\/(\d+)/);
+          if (!match) continue;
+
+          const itemId = match[1];
+          const cleanUrl = `https://www.facebook.com/marketplace/item/${itemId}/`;
+
+          const imgEl = a.querySelector('img');
+          const imgUrl = imgEl ? (imgEl.getAttribute('src') || '') : '';
+          const imgAlt = imgEl ? (imgEl.getAttribute('alt') || '') : '';
+
+          const ariaLabel = a.getAttribute('aria-label') || '';
+
+          const spans = Array.from(a.querySelectorAll('span[dir="auto"], span'))
+            .map(s => s.innerText ? s.innerText.trim() : '')
+            .filter(Boolean);
+
+          const fullText = a.innerText ? a.innerText.replace(/\r?\n+/g, ' | ').trim() : '';
+
+          results.push({ itemId, url: cleanUrl, imgUrl, imgAlt, ariaLabel, spans, fullText });
+        }
+
+        return results;
+      });
+
+      await page.close().catch(() => {});
+      console.log(`[FB Hub OK] ${hub.name} -> ${hubItems.length} raw item(s) (attempt ${attempt}/${MAX_RETRIES + 1})`);
+      return hubItems;
+    } catch (err) {
+      lastError = err;
+      if (page) await page.close().catch(() => {});
+      console.warn(`[FB Hub Retry] ${hub.name} attempt ${attempt}/${MAX_RETRIES + 1} failed: ${err.message}`);
+      if (attempt <= MAX_RETRIES) {
+        await new Promise((resolve) => setTimeout(resolve, 1200 * attempt)); // linear backoff
+      }
+    }
+  }
+
+  console.warn(`[Facebook Scraper Hub Notice] Hub ${hub.name} skipped after ${MAX_RETRIES + 1} attempts: ${lastError ? lastError.message : 'unknown error'}`);
+  return [];
+}
+
 /**
  * Scrapes recently posted 3-Wheel deals from Facebook Marketplace across all Sri Lankan regions
  * Runs safely in guest / logged-out mode without requiring a personal Facebook account.
@@ -69,77 +198,20 @@ const scrapeFacebook = async () => {
       ],
     });
 
-    const page = await browser.newPage();
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
-    await page.setViewport({ width: 1920, height: 1080 });
+    // Scrape all 9 hubs with bounded concurrency so one slow/failed hub
+    // can't cascade into the next hub's time budget.
+    const perHubResults = await runWithConcurrency(REGIONAL_HUBS, HUB_CONCURRENCY, (hub) =>
+      scrapeHub(browser, hub)
+    );
 
     const allRawItems = [];
     const seenItemIds = new Set();
-
-    // Query each regional hub to guarantee island-wide coverage
-    for (const hub of REGIONAL_HUBS) {
-      try {
-        const cacheBuster = Date.now();
-        const requestUrl = `https://www.facebook.com/marketplace/${hub.slug}/search/?query=three%20wheel&sortBy=creation_time_descend&_t=${cacheBuster}`;
-
-        await page.goto(requestUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-        await new Promise((resolve) => setTimeout(resolve, 2500));
-
-        // Dismiss any Facebook login or cookie overlay modal
-        try {
-          await page.keyboard.press('Escape');
-          const closeBtn = await page.$('div[aria-label="Close"], [aria-label="close"], div[role="button"][tabindex="0"]');
-          if (closeBtn) await closeBtn.click().catch(() => {});
-        } catch (_) {}
-
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-
-        const hubItems = await page.evaluate(() => {
-          const results = [];
-          const links = Array.from(document.querySelectorAll('a[href*="/marketplace/item/"]'));
-
-          for (const a of links) {
-            const href = a.getAttribute('href') || '';
-            const match = href.match(/\/marketplace\/item\/(\d+)/);
-            if (!match) continue;
-
-            const itemId = match[1];
-            const cleanUrl = `https://www.facebook.com/marketplace/item/${itemId}/`;
-
-            const imgEl = a.querySelector('img');
-            const imgUrl = imgEl ? (imgEl.getAttribute('src') || '') : '';
-            const imgAlt = imgEl ? (imgEl.getAttribute('alt') || '') : '';
-
-            const ariaLabel = a.getAttribute('aria-label') || '';
-
-            const spans = Array.from(a.querySelectorAll('span[dir="auto"], span'))
-              .map(s => s.innerText ? s.innerText.trim() : '')
-              .filter(Boolean);
-
-            const fullText = a.innerText ? a.innerText.replace(/\r?\n+/g, ' | ').trim() : '';
-
-            results.push({
-              itemId,
-              url: cleanUrl,
-              imgUrl,
-              imgAlt,
-              ariaLabel,
-              spans,
-              fullText
-            });
-          }
-
-          return results;
-        });
-
-        for (const item of hubItems) {
-          if (!seenItemIds.has(item.itemId)) {
-            seenItemIds.add(item.itemId);
-            allRawItems.push(item);
-          }
+    for (const hubItems of perHubResults) {
+      for (const item of hubItems) {
+        if (!seenItemIds.has(item.itemId)) {
+          seenItemIds.add(item.itemId);
+          allRawItems.push(item);
         }
-      } catch (hubErr) {
-        console.warn(`[Facebook Scraper Hub Notice] Hub ${hub.name} skipped: ${hubErr.message}`);
       }
     }
 
@@ -165,7 +237,6 @@ const scrapeFacebook = async () => {
       const aria = item.ariaLabel || '';
       const cleanAria = aria.replace(/,\s*listing\s*\d+.*$/i, '').trim();
 
-      // Check for price drop in aria label (e.g. "reduced from LKR860,000")
       const dropMatch = cleanAria.match(/reduced from\s+(?:LKR|Rs\.?|රු)\s*([\d,]+)/i);
       if (dropMatch) {
         previousPriceNumeric = parseInt(dropMatch[1].replace(/,/g, ''), 10) || null;
@@ -174,14 +245,12 @@ const scrapeFacebook = async () => {
         }
       }
 
-      // Extract current price (first occurrence of LKR/Rs)
       const priceMatch = cleanAria.match(/(?:LKR|Rs\.?|රු)\s*([\d,]+)/i);
       if (priceMatch) {
         priceNumeric = parseInt(priceMatch[1].replace(/,/g, ''), 10) || 0;
         priceText = `Rs ${priceNumeric.toLocaleString()}`;
       }
 
-      // Extract title and location from cleanAria
       if (cleanAria.includes(',')) {
         const parts = cleanAria.split(',').map(p => p.trim()).filter(Boolean);
         if (parts.length > 0) {
@@ -199,7 +268,6 @@ const scrapeFacebook = async () => {
         }
       }
 
-      // Fallback 1: Extract from imgAlt (e.g. "Three Wheel in Weligama")
       if (item.imgAlt) {
         const altMatch = item.imgAlt.match(/^(.*?)\s+in\s+(.+)$/i);
         if (altMatch) {
@@ -214,7 +282,6 @@ const scrapeFacebook = async () => {
         }
       }
 
-      // Fallback 2: Check card spans / fullText
       if (!priceNumeric) {
         for (const s of item.spans) {
           const m = s.match(/(?:LKR|Rs\.?|රු)\s*([\d,]+)/i);
@@ -226,12 +293,10 @@ const scrapeFacebook = async () => {
         }
       }
 
-      // Fallback 3: Clean up Title
       let title = rawTitle ? rawTitle.replace(/\+/g, ' ').trim() : '';
       if (!title || title.length < 3) {
         title = `Three Wheel`;
       } else {
-        // Clean duplicate repeated words
         title = title.replace(/\b(\w+)\s+\1\b/gi, '$1');
         if (!title.toLowerCase().includes('three wheel') && !title.toLowerCase().includes('3 wheel') && !title.toLowerCase().includes('tuk')) {
           title = `${title} Three Wheel`;
@@ -240,21 +305,17 @@ const scrapeFacebook = async () => {
 
       // ─────────────────────────────────────────────────────────
       // 2. FILTERING: Complete 3-Wheelers ONLY
-      // Prices < 150,000 are spare parts (dashboards, seat covers), rent, or Rs 1,111 placeholders.
-      // Prices > 4,500,000 are spam / test inputs.
       // ─────────────────────────────────────────────────────────
       if (priceNumeric < 150000 || priceNumeric > 4500000) {
         continue;
       }
 
-      // Discard invalid vehicles and parts (cars, vans, bikes, buses, dashboards)
       const testContent = `${title} ${item.fullText} ${item.url}`.toLowerCase();
       const hasInvalid = INVALID_VEHICLES.some(k => testContent.includes(k));
       if (hasInvalid) {
         continue;
       }
 
-      // Calculate Price Drop if detected natively
       if (previousPriceNumeric && previousPriceNumeric > priceNumeric) {
         hasPriceDrop = true;
         priceDropAmount = previousPriceNumeric - priceNumeric;
@@ -262,26 +323,21 @@ const scrapeFacebook = async () => {
 
       seenUrls.add(item.url);
 
-      // Normalize Location using Sri Lanka helper
       let normalizedLocation = normalizeLocation(locationText || 'Sri Lanka');
       if (!normalizedLocation || normalizedLocation === 'Sri Lanka') {
         normalizedLocation = 'Sri Lanka';
       }
 
-      // Enhance generic title with location (e.g. "Three Wheel - Matara")
       if (title === 'Three Wheel' && normalizedLocation !== 'Sri Lanka') {
         const cityPart = normalizedLocation.split(',')[0].trim();
         title = `Bajaj Three Wheel - ${cityPart}`;
       }
 
-      // Extract seller phone number if explicitly written in card text
       const phoneExtracted = extractPhoneFromText(`${title} ${item.fullText}`);
 
-      // Extract year if specified (e.g. 2000 - 2026)
       const yearMatch = `${title} ${item.fullText}`.match(/\b(199\d|20[0-2]\d)\b/);
       const year = yearMatch ? yearMatch[1] : 'N/A';
 
-      // Creation timestamp: staggered back slightly by index for clean descending display
       const postedTimestamp = new Date(Date.now() - index * 3 * 60 * 1000);
 
       listings.push({
