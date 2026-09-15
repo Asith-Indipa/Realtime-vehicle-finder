@@ -16,11 +16,20 @@ const findChromePath = () => {
 };
 
 const INVALID_VEHICLES = [
-  // Motorbikes & Scooters
-  'apache', 'pulsar', 'xcd', 'discover', 'platina', 'ct100', 'ct 100', 'fz', 'dio', 'wego',
-  'hornet', 'gn125', 'gn 125', 'twister', 'ray z', 'pleasure', 'scooty', 'vespa', 'benly',
-  'bike', 'scooter', 'motorcycle', 'yb100', 'splendor', 'dash', 'v15', 'honda', 'yamaha', 'hero',
-  'suzuki', 'kawasaki', 'royal enfield',
+  // Motorbikes & Scooters + Common Sri Lankan Typos & Slang
+  'apache', 'pulsar', 'palser', 'pulser', 'polser', 'plsr', 'xcd', 'discover', 'discorver', 'discove',
+  'platina', 'plateno', 'platino', 'ct100', 'ct 100', 'ct-100', 'boxer', 'fz', 'fzs', 'fz-s', 'dio',
+  'wego', 'hornet', 'gn125', 'gn 125', 'gn-125', 'twister', 'ray z', 'ray-z', 'rayzr',
+  'pleasure', 'scooty', 'vespa', 'benly', 'bike', 'bikes', 'scooter', 'scooters',
+  'motorcycle', 'motor cycle', 'motorbike', 'motor bike', 'yb100', 'yb 100', 'splendor',
+  'dash', 'v15', 'honda', 'yamaha', 'hero', 'suzuki', 'kawasaki', 'royal enfield',
+  'gixxer', 'passion', 'glamour', 'cb400', 'cbr', 'duke', 'ns200', 'ns 200', 'ns160', 'ns 160',
+  'xr125', 'xr250', 'dtracker', 'd-tracker', 'volty', 'grasstracker',
+
+  // Motorbike Engine Capacities / CC (Three-wheelers are 175cc, 198cc, 205cc - NEVER 150cc, 125cc, etc.)
+  '100cc', '110cc', '125cc', '135cc', '150cc', '160cc', '180cc', '220cc', '250cc',
+  '100 cc', '110 cc', '125 cc', '135 cc', '150 cc', '160 cc', '180 cc', '220 cc', '250 cc',
+  'bajaj 100', 'bajaj 110', 'bajaj 125', 'bajaj 135', 'bajaj 150', 'bajaj 160', 'bajaj 180', 'bajaj 220',
 
   // Buses
   'bus', 'buses', 'leyland', 'ashok', 'ashok-leyland', 'eicher', 'rosa', 'coaster', 'viking',
@@ -33,6 +42,7 @@ const INVALID_VEHICLES = [
   'proton', 'mg', 'chery', 'dfsk', 'micro', 'land rover', 'jeep', 'suv', 'sedan', 'hatchback',
   'nissan', 'crew cab', 'double cab', 'single cab', 'cab', 'pickup', 'pick up', 'navara', 'hilux',
   'l200', 'bongo', 'canter', 'townace', 'liteace', 'hiace', 'carina', 'bluebird', 'vitz', 'celerio',
+
   // Spare Parts, Tyres, Engines, Accessories (Not complete vehicles)
   'tyre', 'tire', 'tyres', 'tires', 'hood', 'canopy', 'meter', 'silencer', 'silancer',
   'carburetor', 'carborator', 'engine', 'spare part', 'spare parts', 'alloy wheel', 'alloy rim',

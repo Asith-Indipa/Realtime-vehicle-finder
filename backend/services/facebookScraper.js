@@ -3,11 +3,20 @@ const { normalizeLocation } = require('../utils/locationHelper');
 const { extractPhoneFromText, findChromePath } = require('./detailService');
 
 const INVALID_VEHICLES = [
-  // Motorbikes & Scooters
-  'apache', 'pulsar', 'xcd', 'discover', 'platina', 'ct100', 'ct 100', 'fz', 'dio', 'wego',
-  'hornet', 'gn125', 'gn 125', 'twister', 'ray z', 'pleasure', 'scooty', 'vespa', 'benly',
-  'bike', 'scooter', 'motorcycle', 'yb100', 'splendor', 'dash', 'v15', 'honda', 'yamaha', 'hero',
-  'suzuki', 'kawasaki', 'royal enfield',
+  // Motorbikes & Scooters + Common Sri Lankan Typos & Slang
+  'apache', 'pulsar', 'palser', 'pulser', 'polser', 'plsr', 'xcd', 'discover', 'discorver', 'discove',
+  'platina', 'plateno', 'platino', 'ct100', 'ct 100', 'ct-100', 'boxer', 'fz', 'fzs', 'fz-s', 'dio',
+  'wego', 'hornet', 'gn125', 'gn 125', 'gn-125', 'twister', 'ray z', 'ray-z', 'rayzr',
+  'pleasure', 'scooty', 'vespa', 'benly', 'bike', 'bikes', 'scooter', 'scooters',
+  'motorcycle', 'motor cycle', 'motorbike', 'motor bike', 'yb100', 'yb 100', 'splendor',
+  'dash', 'v15', 'honda', 'yamaha', 'hero', 'suzuki', 'kawasaki', 'royal enfield',
+  'gixxer', 'passion', 'glamour', 'cb400', 'cbr', 'duke', 'ns200', 'ns 200', 'ns160', 'ns 160',
+  'xr125', 'xr250', 'dtracker', 'd-tracker', 'volty', 'grasstracker',
+
+  // Motorbike Engine Capacities / CC (Three-wheelers are 175cc, 198cc, 205cc - NEVER 150cc, 125cc, etc.)
+  '100cc', '110cc', '125cc', '135cc', '150cc', '160cc', '180cc', '220cc', '250cc',
+  '100 cc', '110 cc', '125 cc', '135 cc', '150 cc', '160 cc', '180 cc', '220 cc', '250 cc',
+  'bajaj 100', 'bajaj 110', 'bajaj 125', 'bajaj 135', 'bajaj 150', 'bajaj 160', 'bajaj 180', 'bajaj 220',
 
   // Buses
   'bus', 'buses', 'leyland', 'ashok', 'ashok-leyland', 'eicher', 'rosa', 'coaster', 'viking',
@@ -27,6 +36,8 @@ const INVALID_VEHICLES = [
   'rims', 'battery', 'clutch', 'gear box', 'bare chassis', 'chassis only', 'seat cover', 'curtain',
   'seat set', 'buffer', 'mudguard', 'door net', 'audio setup', 'subwoofer', 'dashboard', 'wheel rack'
 ];
+
+const VALID_THREEWHEEL_REGEX = /\b(bajaj\s*re|re\b|2\s*stroke|4\s*stroke|tvs\s*king|piaggio|ape|three\s*wheel|3\s*wheel|three-wheel|3-wheel|tuk\s*tuk|tuk|tuktuk|triwheel|auto\s*rickshaw|qute|compact|maxima|4stroke|2stroke|2t\b|4t\b|205\b|alfa|atul|(?:20[0-9]|aa[a-z]|ab[a-z]|ac[a-z])\s*-?\s*\d{4})\b/i;
 
 // Complete Sri Lankan regional hubs covering all 9 provinces & 25 districts on Facebook Marketplace
 const REGIONAL_HUBS = [
@@ -307,16 +318,6 @@ const scrapeFacebook = async () => {
         }
       }
 
-      let title = rawTitle ? rawTitle.replace(/\+/g, ' ').trim() : '';
-      if (!title || title.length < 3) {
-        title = `Three Wheel`;
-      } else {
-        title = title.replace(/\b(\w+)\s+\1\b/gi, '$1');
-        if (!title.toLowerCase().includes('three wheel') && !title.toLowerCase().includes('3 wheel') && !title.toLowerCase().includes('tuk')) {
-          title = `${title} Three Wheel`;
-        }
-      }
-
       // ─────────────────────────────────────────────────────────
       // 2. FILTERING: Complete 3-Wheelers ONLY
       // ─────────────────────────────────────────────────────────
@@ -324,10 +325,27 @@ const scrapeFacebook = async () => {
         continue;
       }
 
-      const testContent = `${title} ${item.fullText} ${item.url}`.toLowerCase();
+      const testContent = `${rawTitle} ${item.ariaLabel} ${item.imgAlt} ${item.fullText} ${item.url}`.toLowerCase();
       const hasInvalid = INVALID_VEHICLES.some(k => testContent.includes(k));
       if (hasInvalid) {
         continue;
+      }
+
+      // Positive verification: Must match three-wheeler patterns OR have an empty/generic title
+      const isPositiveThreeWheel = !rawTitle || rawTitle.length < 3 || VALID_THREEWHEEL_REGEX.test(testContent);
+      if (!isPositiveThreeWheel) {
+        continue;
+      }
+
+      let title = rawTitle ? rawTitle.replace(/\+/g, ' ').trim() : '';
+      if (!title || title.length < 3) {
+        title = `Three Wheel`;
+      } else {
+        title = title.replace(/\b(\w+)\s+\1\b/gi, '$1');
+        const lowerTitle = title.toLowerCase();
+        if (!lowerTitle.includes('three wheel') && !lowerTitle.includes('3 wheel') && !lowerTitle.includes('tuk')) {
+          title = `${title} Three Wheel`;
+        }
       }
 
       if (previousPriceNumeric && previousPriceNumeric > priceNumeric) {

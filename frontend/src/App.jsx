@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { io } from 'socket.io-client';
 import { 
   Flame, 
   Search, 
@@ -301,6 +302,52 @@ export default function App() {
     const interval = setInterval(fetchData, 20000);
     return () => clearInterval(interval);
   }, [search, sourceFilter, maxPrice, timeRange, priceDropOnly, selectedLocation, selectedModel, sortBy]);
+
+  // Silent Real-Time Updates via Socket.io (0 delay, NO popups, NO audio)
+  useEffect(() => {
+    const socket = io('http://localhost:5000', {
+      transports: ['websocket', 'polling'],
+    });
+
+    socket.on('new_listing', (newAd) => {
+      if (!newAd || !newAd._id) return;
+      setListings((prev) => {
+        if (prev.some((item) => item._id === newAd._id || (item.sourceUrl && item.sourceUrl === newAd.sourceUrl))) {
+          return prev;
+        }
+        return [newAd, ...prev];
+      });
+
+      setStats((prev) => ({
+        ...prev,
+        totalListings: (prev.totalListings || 0) + 1,
+        todayCount: (prev.todayCount || 0) + 1,
+        ...(newAd.source === 'ikman.lk' ? { ikmanCount: (prev.ikmanCount || 0) + 1 } : {}),
+        ...(newAd.source === 'riyasevana.com' ? { riyasevanaCount: (prev.riyasevanaCount || 0) + 1 } : {}),
+        ...(newAd.source === 'facebook.com' ? { facebookCount: (prev.facebookCount || 0) + 1 } : {}),
+      }));
+    });
+
+    socket.on('price_drop', (updatedAd) => {
+      if (!updatedAd || !updatedAd._id) return;
+      setListings((prev) =>
+        prev.map((item) => {
+          if (item._id === updatedAd._id || (item.sourceUrl && item.sourceUrl === updatedAd.sourceUrl)) {
+            return { ...item, ...updatedAd };
+          }
+          return item;
+        })
+      );
+      setStats((prev) => ({
+        ...prev,
+        priceDropCount: (prev.priceDropCount || 0) + 1,
+      }));
+    });
+
+    return () => {
+      socket.disconnect();
+    };
+  }, []);
 
   // Fast 1-second interval dedicated for instant WhatsApp QR scan & connection detection
   useEffect(() => {

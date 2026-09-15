@@ -52,15 +52,125 @@ const extractPhoneFromText = (text) => {
   return null;
 };
 
+const parseFacebookPostedTime = (text) => {
+  if (!text) return null;
+  const match = text.match(/Listed\s+([^\n\r]+?)(?:\s+in\s+([^\n\r]+))?$/im) || text.match(/Listed\s+([^\n\r]+)/im);
+  if (!match) return null;
+
+  const rawTimeStr = match[1].trim();
+  const rawLoc = match[2] ? match[2].trim() : null;
+  const now = new Date();
+  let postedTimestamp = now;
+
+  const lower = rawTimeStr.toLowerCase();
+  const minMatch = lower.match(/(\d+)\s*min/);
+  const hrMatch = lower.match(/(\d+)\s*hour/);
+  const dayMatch = lower.match(/(\d+)\s*day/);
+  const weekMatch = lower.match(/(\d+)\s*week/);
+  const monthMatch = lower.match(/(\d+)\s*month/);
+
+  if (minMatch) {
+    postedTimestamp = new Date(now.getTime() - parseInt(minMatch[1], 10) * 60 * 1000);
+  } else if (hrMatch) {
+    postedTimestamp = new Date(now.getTime() - parseInt(hrMatch[1], 10) * 60 * 60 * 1000);
+  } else if (lower.includes('an hour ago') || lower.includes('about an hour')) {
+    postedTimestamp = new Date(now.getTime() - 60 * 60 * 1000);
+  } else if (lower.includes('yesterday')) {
+    postedTimestamp = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  } else if (dayMatch) {
+    postedTimestamp = new Date(now.getTime() - parseInt(dayMatch[1], 10) * 24 * 60 * 60 * 1000);
+  } else if (weekMatch) {
+    postedTimestamp = new Date(now.getTime() - parseInt(weekMatch[1], 10) * 7 * 24 * 60 * 60 * 1000);
+  } else if (monthMatch) {
+    postedTimestamp = new Date(now.getTime() - parseInt(monthMatch[1], 10) * 30 * 24 * 60 * 60 * 1000);
+  }
+
+  return {
+    postedTimestamp,
+    postedTimeText: `Listed ${rawTimeStr}`,
+    location: rawLoc,
+  };
+};
+
+const fetchFacebookDetails = async (sourceUrl, existingBrowser = null) => {
+  let browser = existingBrowser;
+  let shouldCloseBrowser = false;
+  try {
+    if (!browser) {
+      const chromePath = findChromePath();
+      if (!chromePath) return { phone: null, location: null, postedTimestamp: null, postedTimeText: null };
+      browser = await puppeteer.launch({
+        executablePath: chromePath,
+        headless: 'new',
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+      });
+      shouldCloseBrowser = true;
+    }
+
+    const page = await browser.newPage();
+    await page.setUserAgent(
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+    );
+
+    // Fast load: abort heavy images, media, font
+    await page.setRequestInterception(true);
+    page.on('request', (req) => {
+      const resType = req.resourceType();
+      if (['image', 'media', 'font'].includes(resType)) {
+        req.abort().catch(() => {});
+      } else {
+        req.continue().catch(() => {});
+      }
+    });
+
+    await page.goto(sourceUrl, { waitUntil: 'domcontentloaded', timeout: 25000 });
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+
+    const pageData = await page.evaluate(() => {
+      const bodyText = document.body ? document.body.innerText : '';
+      return { bodyText };
+    });
+
+    await page.close().catch(() => {});
+
+    let extractedPhone = extractPhoneFromText(pageData.bodyText);
+    let extractedLocation = null;
+    let postedTimestamp = null;
+    let postedTimeText = null;
+
+    const parsed = parseFacebookPostedTime(pageData.bodyText);
+    if (parsed) {
+      postedTimestamp = parsed.postedTimestamp;
+      postedTimeText = parsed.postedTimeText;
+      if (parsed.location) {
+        extractedLocation = parsed.location;
+      }
+    }
+
+    return {
+      phone: extractedPhone,
+      location: extractedLocation,
+      postedTimestamp,
+      postedTimeText,
+    };
+  } catch (err) {
+    console.warn(`[Facebook Detail Warning] ${err.message}`);
+    return { phone: null, location: null, postedTimestamp: null, postedTimeText: null };
+  } finally {
+    if (shouldCloseBrowser && browser) {
+      await browser.close().catch(() => {});
+    }
+  }
+};
+
 /**
- * Fetches the seller's contact phone number and exact location (City, District) directly from detail page
+ * Fetches the seller's contact phone number, exact location, and real post timestamp directly from detail page
  */
 const fetchSellerDetails = async (sourceUrl, source, existingBrowser = null) => {
-  if (!sourceUrl) return { phone: null, location: null };
+  if (!sourceUrl) return { phone: null, location: null, postedTimestamp: null, postedTimeText: null };
 
-  // Facebook Marketplace listings handle communication via Messenger or card text
   if (source === 'facebook.com' || sourceUrl.includes('facebook.com')) {
-    return { phone: null, location: null };
+    return await fetchFacebookDetails(sourceUrl, existingBrowser);
   }
 
   let extractedPhone = null;

@@ -13,7 +13,20 @@ const { sendWhatsAppAlert, sendWhatsAppPriceDropAlert, getWhatsAppStatus, restar
 const listingRoutes = require('./routes/listingRoutes');
 const authRoutes = require('./routes/authRoutes');
 
+const http = require('http');
+const { Server } = require('socket.io');
 const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: '*',
+    methods: ['GET', 'POST'],
+  },
+});
+
+io.on('connection', (socket) => {
+  // Silent real-time connection established
+});
 app.use(cors());
 app.use(express.json());
 
@@ -141,6 +154,9 @@ const runScrapeCycle = async () => {
           await existingByUrl.save();
 
           await sendWhatsAppPriceDropAlert(existingByUrl);
+
+          // Silent real-time update to connected web clients
+          io.emit('price_drop', existingByUrl);
         }
         // IMPORTANT: Do NOT update postedTimestamp for existing ads!
         // Keeping original post timestamp prevents old ads from constantly jumping to the top of the website.
@@ -172,13 +188,35 @@ const runScrapeCycle = async () => {
         continue; // Skip WhatsApp alert & duplicate Cloudinary upload
       }
 
+      // Step 2.5: For Facebook ads, extract actual posted time & location from detail page
+      let preFetchedDetails = null;
+      if (ad.source === 'facebook.com') {
+        preFetchedDetails = await fetchSellerDetails(ad.sourceUrl, ad.source);
+        if (preFetchedDetails.postedTimestamp) {
+          ad.postedTimestamp = preFetchedDetails.postedTimestamp;
+          ad.postedTimeText = preFetchedDetails.postedTimeText;
+        }
+        if (preFetchedDetails.location && preFetchedDetails.location !== 'Sri Lanka') {
+          ad.location = preFetchedDetails.location;
+        }
+        if (preFetchedDetails.phone && preFetchedDetails.phone !== 'N/A') {
+          ad.phone = preFetchedDetails.phone;
+        }
+      }
+
       // Step 3: Check age of listing - ONLY process recent ads (posted within last 48 hours)
       const nowMs = Date.now();
       const listingMs = ad.postedTimestamp ? new Date(ad.postedTimestamp).getTime() : nowMs;
       const ageInHours = (nowMs - listingMs) / (1000 * 60 * 60);
 
       if (ageInHours > 48) {
-        console.log(`ℹ️ [WhatsApp Skip] "${ad.title}" is a promoted/bumped ad originally posted on "${ad.postedTimeText}". Skipping instant alert.`);
+        console.log(`ℹ️ [Age Skip] "${ad.title}" is older than 48h (${ad.postedTimeText || `${Math.round(ageInHours / 24)}d ago`}). Skipping.`);
+        if (ad.source === 'facebook.com') {
+          const fbItemId = ad.itemId || (ad.sourceUrl ? (ad.sourceUrl.match(/item\/(\d+)/) || [])[1] : null);
+          if (fbItemId) {
+            await FacebookBaseline.create({ itemId: fbItemId }).catch(() => {});
+          }
+        }
         continue;
       }
 
@@ -208,8 +246,8 @@ const runScrapeCycle = async () => {
       newItemsCount++;
       console.log(`✨ [GENUINE NEW DEAL] [${ad.source}] ${ad.title} (${ad.price})`);
 
-      // Extract seller phone number and exact location (City, District) directly from detail page
-      const details = await fetchSellerDetails(newListing.sourceUrl, newListing.source);
+      // Extract seller phone number and exact location (City, District) directly from detail page (if not already prefetched)
+      const details = preFetchedDetails || await fetchSellerDetails(newListing.sourceUrl, newListing.source);
       let listingUpdated = false;
 
       if (details.phone && (!newListing.phone || newListing.phone === 'N/A')) {
@@ -224,9 +262,18 @@ const runScrapeCycle = async () => {
         console.log(`📍 [Exact Location Extracted] ${details.location} for ${newListing.title}`);
       }
 
+      if (details.postedTimestamp && (!newListing.postedTimeText || newListing.postedTimeText === 'Recently posted')) {
+        newListing.postedTimestamp = details.postedTimestamp;
+        newListing.postedTimeText = details.postedTimeText;
+        listingUpdated = true;
+      }
+
       if (listingUpdated) {
         await newListing.save();
       }
+
+      // Silent real-time update to connected web clients
+      io.emit('new_listing', newListing);
 
       // Trigger instant WhatsApp alert ONLY for genuinely new ads posted within the last 48 hours
       const sent = await sendWhatsAppAlert(newListing);
@@ -277,7 +324,7 @@ const PORT = process.env.PORT || 5000;
 // Connect Database & Launch Server if executed directly
 if (require.main === module) {
   connectDB().then(() => {
-    app.listen(PORT, () => {
+    server.listen(PORT, () => {
       console.log(`🚀 [Server Ready] Running on http://localhost:${PORT}`);
 
       // Initial scrape 3 seconds after server startup (scraping runs FIRST, cleanup runs in background after)
@@ -298,4 +345,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { app, fetchSellerDetails, extractPhoneFromText, findChromePath, runScrapeCycle };
+module.exports = { app, server, io, fetchSellerDetails, extractPhoneFromText, findChromePath, runScrapeCycle };
