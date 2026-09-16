@@ -83,11 +83,35 @@ const runScrapeCycle = async () => {
   console.log(`======================================================`);
 
   try {
-    const [ikmanAds, riyasevanaAds, facebookAds] = await Promise.all([
-      scrapeIkman(),
-      scrapeRiyasevana(),
-      scrapeFacebook(),
-    ]);
+    // 1. Scrape ikman.lk (Lightweight HTTP Axios, ~2-3 seconds, 0 Chrome footprint)
+    let ikmanAds = [];
+    try {
+      ikmanAds = await scrapeIkman();
+    } catch (e) {
+      console.error(`[Scraper Error - ikman.lk] ${e.message}`);
+    }
+
+    // Small cooling pause to keep CPU/RAM calm
+    await new Promise((r) => setTimeout(r, 1000));
+
+    // 2. Scrape riyasewana.com (Single headless Chrome instance, ~4-5 seconds)
+    let riyasevanaAds = [];
+    try {
+      riyasevanaAds = await scrapeRiyasevana();
+    } catch (e) {
+      console.error(`[Scraper Error - riyasewana.com] ${e.message}`);
+    }
+
+    // Small cooling pause to allow Chrome socket to close cleanly
+    await new Promise((r) => setTimeout(r, 1500));
+
+    // 3. Scrape facebook.com (2 concurrent lanes across regional hubs, ~15-20 seconds)
+    let facebookAds = [];
+    try {
+      facebookAds = await scrapeFacebook();
+    } catch (e) {
+      console.error(`[Scraper Error - facebook.com] ${e.message}`);
+    }
 
     // Baseline Initialization for Facebook Marketplace
     // On the initial scrape cycle of server boot, ALL current Facebook ads across all 9 provinces

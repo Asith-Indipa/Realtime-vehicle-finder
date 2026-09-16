@@ -13,21 +13,28 @@ const getBrowserExecutablePath = () => {
   const programFilesX86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
 
   const candidates = [
+    // Edge (rock-solid stable Chromium engine on Windows)
+    path.join(programFilesX86, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+    path.join(programFiles, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
     // Chrome
     path.join(programFiles, 'Google', 'Chrome', 'Application', 'chrome.exe'),
     path.join(programFilesX86, 'Google', 'Chrome', 'Application', 'chrome.exe'),
     path.join(localAppData, 'Google', 'Chrome', 'Application', 'chrome.exe'),
-    // Edge
-    path.join(programFiles, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
-    path.join(programFilesX86, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
     // Brave
     path.join(localAppData, 'BraveSoftware', 'Brave-Browser', 'Application', 'brave.exe'),
     path.join(programFiles, 'BraveSoftware', 'Brave-Browser', 'Application', 'brave.exe'),
     // Vivaldi & Opera
     path.join(localAppData, 'Vivaldi', 'Application', 'vivaldi.exe'),
     path.join(programFiles, 'Opera', 'launcher.exe'),
+    // Linux / Ubuntu VPS
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+    '/snap/bin/chromium',
     // ENV override
     process.env.CHROME_PATH,
+    process.env.PUPPETEER_EXECUTABLE_PATH,
   ];
 
   for (const p of candidates) {
@@ -111,6 +118,7 @@ let qrCodeImageUrl = null;
 const createPuppeteerOptions = () => {
   const opts = {
     headless: 'new',
+    protocolTimeout: 90000,
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',

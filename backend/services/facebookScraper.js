@@ -58,7 +58,7 @@ const SEARCH_QUERIES = ['three wheel', '3 wheel', 'bajaj re'];
 // ── Tunables ────────────────────────────────────────────────────────────────
 const HUB_TIMEOUT_MS = 45000;      // per-attempt navigation timeout (was 20000)
 const MAX_RETRIES = 2;             // extra attempts after the first (3 tries total)
-const HUB_CONCURRENCY = 4;         // parallel pages; fast and lightweight
+const HUB_CONCURRENCY = 2;         // 2 parallel pages for stable memory & zero CDP socket drops
 const CARD_WAIT_TIMEOUT_MS = 8000; // adaptive wait for ad cards to hydrate
 const BLOCKED_RESOURCE_TYPES = new Set(['image', 'media', 'font', 'stylesheet']);
 
@@ -202,6 +202,7 @@ const scrapeFacebook = async () => {
     browser = await puppeteer.launch({
       executablePath: chromePath,
       headless: 'new',
+      protocolTimeout: 90000,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',

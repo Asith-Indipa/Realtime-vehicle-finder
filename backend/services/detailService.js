@@ -5,10 +5,26 @@ const fs = require('fs');
 const { extractIkmanLocation, extractRiyasevanaLocation } = require('../utils/locationHelper');
 
 const findChromePath = () => {
+  if (process.env.PUPPETEER_EXECUTABLE_PATH && fs.existsSync(process.env.PUPPETEER_EXECUTABLE_PATH)) {
+    return process.env.PUPPETEER_EXECUTABLE_PATH;
+  }
+  if (process.env.CHROME_PATH && fs.existsSync(process.env.CHROME_PATH)) {
+    return process.env.CHROME_PATH;
+  }
   const commonPaths = [
+    // Windows Edge (rock-solid stable Chromium engine)
+    'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+    'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+    // Linux / Ubuntu VPS
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+    '/snap/bin/chromium',
+    // Windows Chrome
     'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
     'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-    process.env.LOCALAPPDATA + '\\Google\\Chrome\\Application\\chrome.exe',
+    (process.env.LOCALAPPDATA || '') + '\\Google\\Chrome\\Application\\chrome.exe',
   ];
   for (const p of commonPaths) {
     if (p && fs.existsSync(p)) return p;
@@ -102,6 +118,7 @@ const fetchFacebookDetails = async (sourceUrl, existingBrowser = null) => {
       browser = await puppeteer.launch({
         executablePath: chromePath,
         headless: 'new',
+        protocolTimeout: 90000,
         args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
       });
       shouldCloseBrowser = true;
@@ -250,6 +267,7 @@ const fetchSellerDetails = async (sourceUrl, source, existingBrowser = null) => 
       browser = await puppeteer.launch({
         executablePath: chromePath,
         headless: 'new',
+        protocolTimeout: 90000,
         args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
       });
       shouldCloseBrowser = true;
