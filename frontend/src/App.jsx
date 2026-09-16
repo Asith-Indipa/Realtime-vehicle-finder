@@ -28,9 +28,15 @@ import {
   Phone
 } from 'lucide-react';
 
-const API_BASE_URL = 'http://localhost:5000/api/listings';
-const WHATSAPP_STATUS_URL = 'http://localhost:5000/api/whatsapp/status';
-const AUTH_API_URL = 'http://localhost:5000/api/auth';
+import { DEFAULT_SRI_LANKA_HIERARCHY } from './utils/locationData';
+
+const BACKEND_HOST = typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1'
+  ? `http://${window.location.hostname}:5000`
+  : 'http://localhost:5000';
+
+const API_BASE_URL = `${BACKEND_HOST}/api/listings`;
+const WHATSAPP_STATUS_URL = `${BACKEND_HOST}/api/whatsapp/status`;
+const AUTH_API_URL = `${BACKEND_HOST}/api/auth`;
 
 /**
  * Dynamically calculates human-readable relative time from a Date/timestamp.
@@ -71,7 +77,7 @@ export default function App() {
   const [selectedModel, setSelectedModel] = useState('all');
   const [sortBy, setSortBy] = useState('latest');
   const [locationsList, setLocationsList] = useState([]);
-  const [locationHierarchy, setLocationHierarchy] = useState({});
+  const [locationHierarchy, setLocationHierarchy] = useState(DEFAULT_SRI_LANKA_HIERARCHY);
   const [showLocationModal, setShowLocationModal] = useState(false);
   const [activeDistrict, setActiveDistrict] = useState('Colombo');
   const [locationSearch, setLocationSearch] = useState('');
@@ -120,7 +126,7 @@ export default function App() {
   const handleRestartWhatsApp = async () => {
     setRestartingWa(true);
     try {
-      await fetch('http://localhost:5000/api/whatsapp/restart', { method: 'POST' });
+      await fetch(`${BACKEND_HOST}/api/whatsapp/restart`, { method: 'POST' });
     } catch (e) {
       console.error(e);
     } finally {
@@ -131,7 +137,7 @@ export default function App() {
   const handleLogoutWhatsApp = async () => {
     setLoggingOutWa(true);
     try {
-      await fetch('http://localhost:5000/api/whatsapp/logout', { method: 'POST' });
+      await fetch(`${BACKEND_HOST}/api/whatsapp/logout`, { method: 'POST' });
     } catch (e) {
       console.error(e);
     } finally {
@@ -246,7 +252,10 @@ export default function App() {
       const res = await fetch(`${API_BASE_URL}/locations/hierarchy`);
       const data = await res.json();
       if (data.success && data.hierarchy) {
-        setLocationHierarchy(data.hierarchy);
+        setLocationHierarchy((prev) => ({
+          ...DEFAULT_SRI_LANKA_HIERARCHY,
+          ...data.hierarchy,
+        }));
       }
     } catch (e) {
       console.error('Failed to fetch location hierarchy:', e);
@@ -256,6 +265,34 @@ export default function App() {
   useEffect(() => {
     fetchLocations();
   }, []);
+
+  const handleOpenLocationModal = () => {
+    fetchLocations();
+    setShowLocationModal(true);
+  };
+
+  const handleLocationSearchChange = (val) => {
+    setLocationSearch(val);
+    if (!val || !val.trim()) return;
+    const cleanSearch = val.toLowerCase().trim();
+
+    // 1. Check if search term matches any district directly (e.g. "matara" -> Matara)
+    const directDistrictMatch = Object.keys(locationHierarchy).find(
+      (d) => d.toLowerCase() === cleanSearch || d.toLowerCase().startsWith(cleanSearch)
+    );
+    if (directDistrictMatch) {
+      setActiveDistrict(directDistrictMatch);
+      return;
+    }
+
+    // 2. Check if search term matches a town inside any district (e.g. "weligama" -> Matara)
+    for (const [dist, towns] of Object.entries(locationHierarchy)) {
+      if (towns && towns.some((t) => t.toLowerCase().includes(cleanSearch))) {
+        setActiveDistrict(dist);
+        break;
+      }
+    }
+  };
 
   const fetchData = async () => {
     try {
@@ -305,7 +342,7 @@ export default function App() {
 
   // Silent Real-Time Updates via Socket.io (0 delay, NO popups, NO audio)
   useEffect(() => {
-    const socket = io('http://localhost:5000', {
+    const socket = io(BACKEND_HOST, {
       transports: ['websocket', 'polling'],
     });
 
@@ -635,7 +672,7 @@ export default function App() {
 
         {/* Location Selector Trigger Button */}
         <button
-          onClick={() => setShowLocationModal(true)}
+          onClick={handleOpenLocationModal}
           className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-sm font-semibold border transition-all cursor-pointer ${
             selectedLocation !== 'all'
               ? 'bg-blue-500/20 border-blue-500 text-blue-300 shadow-md shadow-blue-500/20'
@@ -1337,9 +1374,9 @@ export default function App() {
                 <input
                   type="text"
                   className="bg-transparent border-none outline-none text-xs text-white placeholder-slate-500 w-full"
-                  placeholder="Search district or town (e.g. Weligama, Kandy, Maharagama)..."
+                  placeholder="Search district or town (e.g. Matara, Weligama, Kandy, Maharagama)..."
                   value={locationSearch}
-                  onChange={(e) => setLocationSearch(e.target.value)}
+                  onChange={(e) => handleLocationSearchChange(e.target.value)}
                 />
                 {locationSearch && (
                   <button onClick={() => setLocationSearch('')} className="text-slate-400 hover:text-white text-xs cursor-pointer">
@@ -1421,9 +1458,11 @@ export default function App() {
 
                   {(locationHierarchy[activeDistrict] || [])
                     .filter((c) => !c.startsWith('All in '))
-                    .filter((c) =>
-                      !locationSearch ? true : c.toLowerCase().includes(locationSearch.toLowerCase())
-                    )
+                    .filter((c) => {
+                      if (!locationSearch) return true;
+                      const q = locationSearch.toLowerCase();
+                      return c.toLowerCase().includes(q) || activeDistrict.toLowerCase().includes(q);
+                    })
                     .map((city) => {
                       const isSelected = selectedLocation === city || selectedLocation === `${city}, ${activeDistrict}`;
                       return (
