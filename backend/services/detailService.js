@@ -70,7 +70,10 @@ const extractPhoneFromText = (text) => {
 
 const parseFacebookPostedTime = (text) => {
   if (!text) return null;
-  const match = text.match(/Listed\s+([^\n\r]+?)(?:\s+in\s+([^\n\r]+))?$/im) || text.match(/Listed\s+([^\n\r]+)/im);
+  const match = text.match(/Listed\s+([^\n\r·•|]+?)(?:\s+in\s+([^\n\r]+))?$/im) ||
+                text.match(/Listed\s+([^\n\r·•|]+)/im) ||
+                text.match(/(\d+\s*(?:min|minute|hour|hr|day|week|month)s?\s*ago)/i) ||
+                text.match(/(about an hour ago|just now|a few seconds ago)/i);
   if (!match) return null;
 
   const rawTimeStr = match[1].trim();
@@ -79,13 +82,16 @@ const parseFacebookPostedTime = (text) => {
   let postedTimestamp = now;
 
   const lower = rawTimeStr.toLowerCase();
-  const minMatch = lower.match(/(\d+)\s*min/);
-  const hrMatch = lower.match(/(\d+)\s*hour/);
+  const secMatch = lower.includes('just now') || lower.includes('few seconds') || lower.match(/(\d+)\s*(?:sec|second)/);
+  const minMatch = lower.match(/(\d+)\s*(?:min|minute)/);
+  const hrMatch = lower.match(/(\d+)\s*(?:hr|hour)/);
   const dayMatch = lower.match(/(\d+)\s*day/);
   const weekMatch = lower.match(/(\d+)\s*week/);
   const monthMatch = lower.match(/(\d+)\s*month/);
 
-  if (minMatch) {
+  if (secMatch) {
+    postedTimestamp = now;
+  } else if (minMatch) {
     postedTimestamp = new Date(now.getTime() - parseInt(minMatch[1], 10) * 60 * 1000);
   } else if (hrMatch) {
     postedTimestamp = new Date(now.getTime() - parseInt(hrMatch[1], 10) * 60 * 60 * 1000);
@@ -390,4 +396,5 @@ module.exports = {
   fetchSellerDetails,
   extractPhoneFromText,
   findChromePath,
+  parseFacebookPostedTime,
 };

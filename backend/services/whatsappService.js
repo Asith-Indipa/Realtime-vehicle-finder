@@ -326,7 +326,7 @@ const resolveTargetJid = async (phone) => {
   if (!client || !clientReady) return defaultJid;
   try {
     const numberId = await client.getNumberId(cleaned);
-    if (numberId && numberId._serialized) {
+    if (numberId && numberId._serialized && !numberId._serialized.endsWith('@lid')) {
       return numberId._serialized;
     }
   } catch (err) {
@@ -453,7 +453,7 @@ const sendWhatsAppAlert = async (listing) => {
 
         if (imageToUse) {
           try {
-            const media = await MessageMedia.fromUrl(imageToUse);
+            const media = await MessageMedia.fromUrl(imageToUse, { unsafeMime: true });
             await client.sendMessage(targetJid, media, { caption: messageText });
           } catch (mediaErr) {
             console.log(`[WhatsApp Media Warning for ${targetJid}] ${mediaErr.message}. Sending text alert...`);
@@ -526,7 +526,7 @@ const sendWhatsAppPriceDropAlert = async (listing) => {
 
         if (imageToUse) {
           try {
-            const media = await MessageMedia.fromUrl(imageToUse);
+            const media = await MessageMedia.fromUrl(imageToUse, { unsafeMime: true });
             await client.sendMessage(targetJid, media, { caption: messageText });
           } catch (mediaErr) {
             console.log(`[WhatsApp Media Warning for ${targetJid}] ${mediaErr.message}. Sending text alert...`);

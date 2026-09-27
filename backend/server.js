@@ -55,6 +55,7 @@ app.use('/api/whatsapp/test', async (req, res) => {
     phone: '0716394044',
     source: 'ikman.lk',
     sourceUrl: 'https://ikman.lk/test-deal',
+    cloudinaryImages: ['https://res.cloudinary.com/andfs3ei/image/upload/v1790191471/three_wheel_deals/img_14fdcda7abee0666dc17ce7fe089ecdb.jpg'],
   };
   const result = await sendWhatsAppAlert(sampleListing);
   res.json({ success: result, message: 'Test alert sent to matching subscribers.' });
@@ -69,12 +70,20 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
 });
 
+const puppeteer = require('puppeteer-core');
 const { fetchSellerDetails, extractPhoneFromText, findChromePath } = require('./services/detailService');
 
 let isFirstScrapeCycle = true;
+let isScrapeCycleRunning = false;
+const SERVER_START_TIME = new Date();
 
 // Master Scraping & Alert Execution Loop
 const runScrapeCycle = async () => {
+  if (isScrapeCycleRunning) {
+    console.log(`⏳ [Scraper Cycle Skipped] Previous cycle is still actively running. Skipping this trigger to prevent memory/CPU overload.`);
+    return;
+  }
+  isScrapeCycleRunning = true;
   const isInitialRun = isFirstScrapeCycle;
   isFirstScrapeCycle = false;
 
@@ -142,8 +151,25 @@ const runScrapeCycle = async () => {
     }
 
     let newItemsCount = 0;
+    let sharedBrowser = null;
 
-    for (const ad of uniqueBatch) {
+    try {
+      const needsDetailBrowser = uniqueBatch.some(
+        (ad) => ad.source === 'facebook.com' && !ad.postedTimestamp
+      );
+      if (needsDetailBrowser) {
+        const chromePath = findChromePath();
+        if (chromePath) {
+          sharedBrowser = await puppeteer.launch({
+            executablePath: chromePath,
+            headless: 'new',
+            protocolTimeout: 90000,
+            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+          }).catch(() => null);
+        }
+      }
+
+      for (const ad of uniqueBatch) {
       // Step 0: If Facebook ad, completely skip if in baseline OR during initial boot cycle
       if (ad.source === 'facebook.com') {
         if (isInitialRun) {
@@ -215,16 +241,37 @@ const runScrapeCycle = async () => {
       // Step 2.5: For Facebook ads, extract actual posted time & location from detail page
       let preFetchedDetails = null;
       if (ad.source === 'facebook.com') {
-        preFetchedDetails = await fetchSellerDetails(ad.sourceUrl, ad.source);
-        if (preFetchedDetails.postedTimestamp) {
-          ad.postedTimestamp = preFetchedDetails.postedTimestamp;
-          ad.postedTimeText = preFetchedDetails.postedTimeText;
+        const fbItemId = ad.itemId || (ad.sourceUrl ? (ad.sourceUrl.match(/item\/(\d+)/) || [])[1] : null);
+
+        // If timestamp was not already found on search card, extract from detail page
+        if (!ad.postedTimestamp) {
+          preFetchedDetails = await fetchSellerDetails(ad.sourceUrl, ad.source, sharedBrowser);
+          if (preFetchedDetails.postedTimestamp) {
+            ad.postedTimestamp = preFetchedDetails.postedTimestamp;
+            ad.postedTimeText = preFetchedDetails.postedTimeText;
+          }
+          if (preFetchedDetails.location && preFetchedDetails.location !== 'Sri Lanka') {
+            ad.location = preFetchedDetails.location;
+          }
+          if (preFetchedDetails.phone && preFetchedDetails.phone !== 'N/A') {
+            ad.phone = preFetchedDetails.phone;
+          }
         }
-        if (preFetchedDetails.location && preFetchedDetails.location !== 'Sri Lanka') {
-          ad.location = preFetchedDetails.location;
+
+        // Strict Real-Time Mode:
+        // 1. If timestamp could not be verified from detail page or card, skip and record in baseline
+        if (!ad.postedTimestamp) {
+          console.log(`ℹ️ [FB Skip - Unverified Timestamp] "${ad.title}" post time could not be confirmed. Skipping.`);
+          if (fbItemId) await FacebookBaseline.create({ itemId: fbItemId }).catch(() => {});
+          continue;
         }
-        if (preFetchedDetails.phone && preFetchedDetails.phone !== 'N/A') {
-          ad.phone = preFetchedDetails.phone;
+
+        // 2. Strict Server Boot Check: If posted before server start, skip and record in baseline
+        const adPostedMs = new Date(ad.postedTimestamp).getTime();
+        if (adPostedMs < SERVER_START_TIME.getTime()) {
+          console.log(`ℹ️ [FB Skip - Pre-Server Post] "${ad.title}" was posted before server start (${ad.postedTimeText || 'older'}). Skipping.`);
+          if (fbItemId) await FacebookBaseline.create({ itemId: fbItemId }).catch(() => {});
+          continue;
         }
       }
 
@@ -271,7 +318,7 @@ const runScrapeCycle = async () => {
       console.log(`✨ [GENUINE NEW DEAL] [${ad.source}] ${ad.title} (${ad.price})`);
 
       // Extract seller phone number and exact location (City, District) directly from detail page (if not already prefetched)
-      const details = preFetchedDetails || await fetchSellerDetails(newListing.sourceUrl, newListing.source);
+      const details = preFetchedDetails || await fetchSellerDetails(newListing.sourceUrl, newListing.source, sharedBrowser);
       let listingUpdated = false;
 
       if (details.phone && (!newListing.phone || newListing.phone === 'N/A')) {
@@ -306,6 +353,11 @@ const runScrapeCycle = async () => {
         await newListing.save();
       }
     }
+    } finally {
+      if (sharedBrowser) {
+        await sharedBrowser.close().catch(() => {});
+      }
+    }
 
     console.log(`[Scraper Cycle Finished] Found ${newItemsCount} new 3-Wheel deal(s).\n`);
 
@@ -320,17 +372,32 @@ const runScrapeCycle = async () => {
 
       if (pendingPhoneAds.length > 0) {
         console.log(`🔍 [Auto-Enrichment] Checking ${pendingPhoneAds.length} recent ad(s) with missing contact details...`);
-        for (const pad of pendingPhoneAds) {
-          const detail = await fetchSellerDetails(pad.sourceUrl, pad.source);
-          if (detail.phone && detail.phone !== 'N/A') {
-            const updateDoc = { phone: detail.phone };
-            if (detail.location && detail.location.includes(',') && (!pad.location || !pad.location.includes(','))) {
-              updateDoc.location = detail.location;
-            }
-            await Listing.updateOne({ _id: pad._id }, { $set: updateDoc });
-            console.log(`   ✅ [Auto-Enriched] "${pad.title}" (${pad.source}) -> Phone: ${detail.phone}`);
+        let enrichBrowser = null;
+        try {
+          const chromePath = findChromePath();
+          if (chromePath) {
+            enrichBrowser = await puppeteer.launch({
+              executablePath: chromePath,
+              headless: 'new',
+              args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+            }).catch(() => null);
           }
-          await new Promise((r) => setTimeout(r, 600));
+          for (const pad of pendingPhoneAds) {
+            const detail = await fetchSellerDetails(pad.sourceUrl, pad.source, enrichBrowser);
+            if (detail.phone && detail.phone !== 'N/A') {
+              const updateDoc = { phone: detail.phone };
+              if (detail.location && detail.location.includes(',') && (!pad.location || !pad.location.includes(','))) {
+                updateDoc.location = detail.location;
+              }
+              await Listing.updateOne({ _id: pad._id }, { $set: updateDoc });
+              console.log(`   ✅ [Auto-Enriched] "${pad.title}" (${pad.source}) -> Phone: ${detail.phone}`);
+            }
+            await new Promise((r) => setTimeout(r, 600));
+          }
+        } finally {
+          if (enrichBrowser) {
+            await enrichBrowser.close().catch(() => {});
+          }
         }
       }
     } catch (enrichErr) {
@@ -338,6 +405,8 @@ const runScrapeCycle = async () => {
     }
   } catch (error) {
     console.error(`[Scraper Cycle Error] ${error.message}`);
+  } finally {
+    isScrapeCycleRunning = false;
   }
 };
 

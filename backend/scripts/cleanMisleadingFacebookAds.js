@@ -9,20 +9,16 @@ async function cleanMisleadingAds() {
     await mongoose.connect(process.env.MONGO_URI);
     console.log('Connected to MongoDB.');
 
-    // Find Facebook ads saved today (last 24 hours) where the ad on FB was actually old or had fake timestamps
-    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const recentFbAds = await Listing.find({
-      source: 'facebook.com',
-      createdAt: { $gte: cutoff }
-    });
+    // Find all historical Facebook ads currently in the DB
+    const allFbAds = await Listing.find({ source: 'facebook.com' });
 
-    console.log(`Found ${recentFbAds.length} Facebook ads created in DB today.`);
-    for (const ad of recentFbAds) {
-      console.log(`- Deleting misleading ad: "${ad.title}" (${ad.price}) | URL: ${ad.sourceUrl}`);
-      // Register into baseline so it stays ignored
+    console.log(`Found ${allFbAds.length} historical Facebook ads in DB.`);
+    for (const ad of allFbAds) {
+      console.log(`- Moving to baseline & deleting: "${ad.title}" (${ad.price})`);
       const match = ad.sourceUrl ? ad.sourceUrl.match(/item\/(\d+)/) : null;
-      if (match && match[1]) {
-        await FacebookBaseline.create({ itemId: match[1] }).catch(() => {});
+      const itemId = ad.itemId || (match ? match[1] : null);
+      if (itemId) {
+        await FacebookBaseline.create({ itemId }).catch(() => {});
       }
       await Listing.findByIdAndDelete(ad._id);
     }

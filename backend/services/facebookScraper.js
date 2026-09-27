@@ -1,6 +1,6 @@
 const puppeteer = require('puppeteer-core');
 const { normalizeLocation } = require('../utils/locationHelper');
-const { extractPhoneFromText, findChromePath } = require('./detailService');
+const { extractPhoneFromText, findChromePath, parseFacebookPostedTime } = require('./detailService');
 
 const INVALID_VEHICLES = [
   // Motorbikes & Scooters + Common Sri Lankan Typos & Slang
@@ -29,6 +29,8 @@ const INVALID_VEHICLES = [
   'proton', 'mg', 'chery', 'dfsk', 'micro', 'land rover', 'jeep', 'suv', 'sedan', 'hatchback',
   'nissan', 'crew cab', 'double cab', 'single cab', 'cab', 'pickup', 'pick up', 'navara', 'hilux',
   'l200', 'bongo', 'canter', 'townace', 'liteace', 'hiace', 'carina', 'bluebird', 'vitz', 'celerio',
+  'box 5fwd', '5fwd', 'lancer box', 'box lancer', 'ke70', 'ke72', 'ke74', 'dx', 'ek3', 'eg8', 'fb14', 'fb15', 'b11', '121', '141',
+  'car sales', 'car sale', 'motor car', 'motor bike',
 
   // Spare Parts, Tyres, Engines, Accessories (Not complete vehicles)
   'tyre', 'tire', 'tyres', 'tires', 'hood', 'canopy', 'meter', 'silencer', 'silancer',
@@ -37,7 +39,7 @@ const INVALID_VEHICLES = [
   'seat set', 'buffer', 'mudguard', 'door net', 'audio setup', 'subwoofer', 'dashboard', 'wheel rack'
 ];
 
-const VALID_THREEWHEEL_REGEX = /\b(bajaj\s*re|re\b|2\s*stroke|4\s*stroke|tvs\s*king|piaggio|ape|three\s*wheel|3\s*wheel|three-wheel|3-wheel|tuk\s*tuk|tuk|tuktuk|triwheel|auto\s*rickshaw|qute|compact|maxima|4stroke|2stroke|2t\b|4t\b|205\b|alfa|atul|(?:20[0-9]|aa[a-z]|ab[a-z]|ac[a-z])\s*-?\s*\d{4})\b/i;
+const VALID_THREEWHEEL_REGEX = /\b(three[\s-]*wheelers?|3[\s-]*wheelers?|three[\s-]*wheel|3[\s-]*wheel|three-wheel|3-wheel|tuk[\s-]*tuk|tuktuk|tuk\b|triwheel|auto[\s-]*rickshaw|bajaj[\s-]*re|tvs[\s-]*king|piaggio|ape\b|re\s*205|re205|bajaj\s*205|qute|compact|maxima|alfa|atul|(?:20[0-9]|aa[a-z]|ab[a-z]|ac[a-z])\s*-?\s*\d{4})\b/i;
 
 // Complete Sri Lankan regional hubs covering all 9 provinces & 25 districts on Facebook Marketplace
 const REGIONAL_HUBS = [
@@ -52,7 +54,7 @@ const REGIONAL_HUBS = [
   { name: 'Sabaragamuwa (Ratnapura / Kegalle)', slug: 'ratnapura' },
 ];
 
-// Expanded search queries to capture all 3-wheeler titles (numeric, word, model specific)
+// Complete search queries covering 100% of three-wheeler ads across all keywords (9 hubs x 3 queries = 27 tasks)
 const SEARCH_QUERIES = ['three wheel', '3 wheel', 'bajaj re'];
 
 // ── Tunables ────────────────────────────────────────────────────────────────
@@ -332,21 +334,29 @@ const scrapeFacebook = async () => {
         continue;
       }
 
-      // Positive verification: Must match three-wheeler patterns OR have an empty/generic title
-      const isPositiveThreeWheel = !rawTitle || rawTitle.length < 3 || VALID_THREEWHEEL_REGEX.test(testContent);
+      // Check if it is an exchange offer from a bike/car owner (e.g. "exchange with three wheel" or "maru three-wheel")
+      const isExchangeAd = /\b(exchange|maru|maru\s*karanawa|maru\s*ok|change)\b/i.test(testContent) &&
+        /\b(bike|motorcycle|scooter|pulsar|dio|car|lancer|alto|wagon|van|lorry)\b/i.test(testContent);
+      if (isExchangeAd) {
+        continue;
+      }
+
+      // 1. MUST have a readable title. Reject unreadable or empty titles!
+      if (!rawTitle || rawTitle.trim().length < 3) {
+        continue;
+      }
+
+      // 2. Strict Positive verification: Title OR card aria-label MUST match three-wheeler regex
+      const isPositiveThreeWheel = VALID_THREEWHEEL_REGEX.test(rawTitle) || VALID_THREEWHEEL_REGEX.test(item.ariaLabel);
       if (!isPositiveThreeWheel) {
         continue;
       }
 
       let title = rawTitle ? rawTitle.replace(/\+/g, ' ').trim() : '';
-      if (!title || title.length < 3) {
-        title = `Three Wheel`;
-      } else {
-        title = title.replace(/\b(\w+)\s+\1\b/gi, '$1');
-        const lowerTitle = title.toLowerCase();
-        if (!lowerTitle.includes('three wheel') && !lowerTitle.includes('3 wheel') && !lowerTitle.includes('tuk')) {
-          title = `${title} Three Wheel`;
-        }
+      title = title.replace(/\b(\w+)\s+\1\b/gi, '$1');
+      const lowerTitle = title.toLowerCase();
+      if (!lowerTitle.includes('three wheel') && !lowerTitle.includes('3 wheel') && !lowerTitle.includes('tuk')) {
+        title = `${title} Three Wheel`;
       }
 
       if (previousPriceNumeric && previousPriceNumeric > priceNumeric) {
@@ -372,17 +382,17 @@ const scrapeFacebook = async () => {
         normalizedLocation = 'Sri Lanka';
       }
 
-      if (title === 'Three Wheel' && normalizedLocation !== 'Sri Lanka') {
-        const cityPart = normalizedLocation.split(',')[0].trim();
-        title = `Bajaj Three Wheel - ${cityPart}`;
-      }
+
 
       const phoneExtracted = extractPhoneFromText(`${title} ${item.fullText}`);
 
       const yearMatch = `${title} ${item.fullText}`.match(/\b(199\d|20[0-2]\d)\b/);
       const year = yearMatch ? yearMatch[1] : 'N/A';
 
-      const postedTimestamp = new Date();
+      // Check if post time was available on the marketplace card (ariaLabel, imgAlt, fullText)
+      const cardParsed = parseFacebookPostedTime(`${item.ariaLabel} ${item.fullText}`);
+      const postedTimestamp = cardParsed ? cardParsed.postedTimestamp : null;
+      const postedTimeText = cardParsed ? cardParsed.postedTimeText : 'Pending verification';
 
       listings.push({
         title,
@@ -396,7 +406,7 @@ const scrapeFacebook = async () => {
         itemId: item.itemId,
         originalImages: item.imgUrl ? [item.imgUrl] : [],
         cloudinaryImages: [],
-        postedTimeText: 'Recently posted',
+        postedTimeText,
         postedTimestamp,
         hasPriceDrop,
         previousPrice,
